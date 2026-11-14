@@ -85,6 +85,8 @@ fun SystemDiagnosticsScreen(
     var stationPhoneInput by remember(notificationPrefs.stationPhone) { mutableStateOf(notificationPrefs.stationPhone) }
     var stationAddressInput by remember(notificationPrefs.stationAddress) { mutableStateOf(notificationPrefs.stationAddress) }
     var countryCodeInput by remember(notificationPrefs.defaultCountryCode) { mutableStateOf(notificationPrefs.defaultCountryCode) }
+    var printerNameInput by remember(notificationPrefs.printerDeviceName) { mutableStateOf(notificationPrefs.printerDeviceName) }
+    var printerAddressInput by remember(notificationPrefs.printerDeviceAddress) { mutableStateOf(notificationPrefs.printerDeviceAddress) }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -237,6 +239,66 @@ fun SystemDiagnosticsScreen(
                                     label = { Text("ورق حراري 80mm") }
                                 )
                             }
+                            Text(
+                                text = "ضبط الطابعة",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "اختر طريقة الاتصال ومقاس الورق. بيانات الجهاز تحفظ هنا لاستخدامها في الفواتير والإيصالات.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("SYSTEM" to "طباعة أندرويد", "BLUETOOTH" to "Bluetooth", "WIFI" to "Wi-Fi", "USB" to "USB").forEach { (type, label) ->
+                                    FilterChip(
+                                        selected = notificationPrefs.printerConnectionType == type,
+                                        onClick = { onUpdateNotificationPrefs { it.copy(printerConnectionType = type) } },
+                                        label = { Text(label) }
+                                    )
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(58 to "58mm", 80 to "80mm", 210 to "A4").forEach { (width, label) ->
+                                    FilterChip(
+                                        selected = notificationPrefs.thermalPaperWidthMm == width,
+                                        onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = width) } },
+                                        label = { Text(label) }
+                                    )
+                                }
+                            }
+                            OutlinedTextField(
+                                value = printerNameInput,
+                                onValueChange = { printerNameInput = it },
+                                label = { Text("اسم الطابعة المختارة") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = printerAddressInput,
+                                onValueChange = { printerAddressInput = it },
+                                label = { Text("عنوان الجهاز أو IP للطابعة (إن وجد)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    onUpdateNotificationPrefs {
+                                        it.copy(
+                                            printerDeviceName = printerNameInput.trim(),
+                                            printerDeviceAddress = printerAddressInput.trim()
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(44.dp).testTag("printer_settings_save_button")
+                            ) {
+                                Text("حفظ إعدادات الطابعة")
+                            }
+                            Text(
+                                text = "ملاحظة: اختيار الجهاز من القائمة والاتصال والطباعة المباشرة سيُفعّلان بعد إضافة دعم بروتوكول الطابعة. لا يتم افتراض توافق كل الطابعات.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
                             OutlinedTextField(
                                 value = stationPhoneInput,
                                 onValueChange = { stationPhoneInput = it },
