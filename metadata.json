@@ -1,0 +1,6 @@
+{
+  "name": "محطة العسل 2027",
+  "description": "تطبيق Alasal2027 (محطة العسل 2027) لإدارة فواتير الكهرباء والمشتركين والتحصيل والعمل دون إنترنت",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

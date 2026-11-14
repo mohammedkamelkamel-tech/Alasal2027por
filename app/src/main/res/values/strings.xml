@@ -1,0 +1,39 @@
+<resources>
+    <string name="app_name">محطة العسل 2027</string>
+    <string name="app_code_name">Alasal2027</string>
+    <string name="app_tagline">نظام فواتير الكهرباء وإدارة المشتركين والتحصيل</string>
+    <string name="phase_two_badge">المشتركون والفواتير والقراءات</string>
+    <string name="phase_three_badge">التحصيل والإيصالات والتقارير والتذكيرات</string>
+    <string name="phase_four_badge">محطة العسل 2027 — النسخة النهائية المتكاملة (تعمل دون إنترنت)</string>
+    <string name="logo_content_desc">شعار محطة العسل 2027 الرسمي</string>
+    <string name="watermark_content_desc">العلامة المائية لمحطة العسل 2027</string>
+
+    <!-- Navigation -->
+    <string name="nav_dashboard">الرئيسية</string>
+    <string name="nav_subscribers">المشتركون</string>
+    <string name="nav_readings">القراءات</string>
+    <string name="nav_invoices">الفواتير</string>
+    <string name="nav_system">النظام</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_welcome">ملخص المحطة والعمليات</string>
+    <string name="dashboard_offline_ready">العمل دون إنترنت مفعّل</string>
+    <string name="stat_subscribers">إجمالي المشتركين</string>
+    <string name="stat_active_tariff">سعر الكيلوواط</string>
+    <string name="stat_arrears">إجمالي المتأخرات</string>
+    <string name="stat_credits">الأرصدة الدائنة</string>
+    <string name="stat_invoices">الفواتير الصادرة</string>
+    <string name="stat_collections">التحصيلات المسجلة</string>
+    <string name="section_database_status">حالة قاعدة البيانات المحلية (14 جدولاً)</string>
+    <string name="section_quick_actions">الإجراءات السريعة</string>
+
+    <!-- Actions & Messages -->
+    <string name="action_toggle_theme">تبديل المظهر</string>
+    <string name="action_backup_saf">نسخ احتياطي (SAF)</string>
+    <string name="action_run_audit_worker">تشغيل فحص الخلفية</string>
+    <string name="action_verify_schema">فحص سلامة الجداول</string>
+    <string name="action_add_subscriber">إضافة مشترك</string>
+    <string name="action_manage_tariffs">إدارة الأسعار</string>
+    <string name="action_save_reading">حفظ القراءة</string>
+    <string name="action_issue_invoice">إصدار فاتورة</string>
+</resources>
