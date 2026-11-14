@@ -203,7 +203,7 @@ object InvoiceShareAndPrintService {
         return null
     }
 
-    fun printInvoice(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?) {
+    fun printInvoice(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?, thermalWidthMm: Int = 58) {
         val arabicLocale = Locale.forLanguageTag("ar")
         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", arabicLocale)
         val html = """
@@ -212,19 +212,25 @@ object InvoiceShareAndPrintService {
             <head>
             <meta charset="utf-8" />
             <style>
-              body { font-family: sans-serif; padding: 24px; color: #0D263C; direction: rtl; }
-              .header { border-bottom: 3px solid #D4AF37; padding-bottom: 12px; margin-bottom: 16px; }
-              .title { font-size: 22px; font-weight: bold; color: #0D263C; }
-              .sub { color: #475569; font-size: 13px; }
-              table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-              th, td { border: 1px solid #CBD5E1; padding: 8px 10px; text-align: right; }
+              @page { size: ${if (thermalWidthMm == 80) "80mm" else "58mm"} auto; margin: 2mm; }
+              html, body { width: ${if (thermalWidthMm == 80) "76mm" else "54mm"}; margin: 0; padding: 0; }
+              body { position: relative; box-sizing: border-box; font-family: sans-serif; padding: 3mm; color: #0D263C; direction: rtl; font-size: 11px; }
+              body:before { content: ""; position: fixed; inset: 18% 8%; background: url('file:///android_res/drawable/img_alasal_watermark.png') center center / contain no-repeat; opacity: .10; z-index: -1; }
+              .header { border-bottom: 2px solid #D4AF37; padding-bottom: 7px; margin-bottom: 9px; text-align: center; }
+              .logo { width: 42px; height: 42px; object-fit: contain; display: block; margin: 0 auto 5px; }
+              .title { font-size: 15px; font-weight: bold; color: #0D263C; }
+              .sub { color: #475569; font-size: 10px; }
+              p { margin: 6px 0; line-height: 1.5; overflow-wrap: anywhere; }
+              table { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
+              th, td { border: 1px solid #CBD5E1; padding: 5px 4px; text-align: right; font-size: 10px; overflow-wrap: anywhere; }
               th { background-color: #0D263C; color: #FFFFFF; }
               .total { font-weight: bold; background-color: #FAF1D1; }
+              @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
             </style>
             </head>
             <body>
               <div class="header">
-                <div class="title">محطة العسل 2027 (Alasal2027)</div>
+                <img class="logo" src="file:///android_res/drawable/img_alasal_logo_transparent.png" /><div class="title">محطة العسل 2027 (Alasal2027)</div>
                 <div class="sub">إشعار فاتورة استهلاك كهرباء — رقم ${invoice.invoiceNumber}</div>
               </div>
               <p><strong>المشترك:</strong> ${subscriber?.fullName ?: "-"} (${subscriber?.subscriberCode ?: "-"})</p>
@@ -254,11 +260,22 @@ object InvoiceShareAndPrintService {
                 if (printManager != null && view != null) {
                     val jobName = "Alasal2027_${invoice.invoiceNumber}"
                     val adapter = view.createPrintDocumentAdapter(jobName)
-                    printManager.print(jobName, adapter, PrintAttributes.Builder().build())
+                    val width = if (thermalWidthMm == 80) 3150 else 2283
+                    val attrs = PrintAttributes.Builder()
+                        .setMediaSize(PrintAttributes.MediaSize(
+                            if (thermalWidthMm == 80) "ALASAL_THERMAL_80" else "ALASAL_THERMAL_58",
+                            if (thermalWidthMm == 80) "Thermal 80mm" else "Thermal 58mm",
+                            width,
+                            12000
+                        ))
+                        .setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME)
+                        .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                        .build()
+                    printManager.print(jobName, adapter, attrs)
                 }
             }
         }
-        webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null)
+        webView.loadDataWithBaseURL("file:///android_res/drawable/", html, "text/HTML", "UTF-8", null)
     }
 
     fun translateStatus(status: String): String = when (status) {
