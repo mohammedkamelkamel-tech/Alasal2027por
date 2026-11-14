@@ -240,9 +240,10 @@ class FoundationViewModel(
     }
 
     fun onAppWentToBackground(nowMillis: Long = System.currentTimeMillis()) {
-        // Keep the session unlocked while the user briefly switches apps.
-        // The configured inactivity timeout is evaluated on foreground return.
         lastBackgroundedAtMs = nowMillis
+        if (backupSessionPrefs.value.appLockEnabled) {
+            _isAppLocked.value = true
+        }
     }
 
     fun onAppReturnedToForeground(nowMillis: Long = System.currentTimeMillis()) {
