@@ -559,7 +559,7 @@ fun ReceiptDetailDialog(
                             )
                             Column {
                                 Text(
-                                    text = receipt.stationNameSnapshot.ifEmpty { "محطة العسل 2027" },
+                                    text = receipt.stationNameSnapshot.replace("Alasal2027", "").replace("2027", "").trim().ifBlank { "محطة العسل" },
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
