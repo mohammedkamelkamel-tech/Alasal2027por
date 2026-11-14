@@ -26,6 +26,9 @@ data class NotificationAndPrintPrefs(
     val collectionNotificationsEnabled: Boolean = true,
     val readingRemindersEnabled: Boolean = true,
     val thermalPaperWidthMm: Int = 80,
+    val printerConnectionType: String = "SYSTEM",
+    val printerDeviceName: String = "",
+    val printerDeviceAddress: String = "",
     val stationPhone: String = "770002027",
     val stationAddress: String = "محطة العسل لتوليد وتوزيع الكهرباء",
     val defaultCountryCode: String = "967"
@@ -51,6 +54,9 @@ class ThemePreferencesRepository(private val context: Context) {
     private val collectionNotifKey = booleanPreferencesKey("collection_notifications_enabled")
     private val reminderNotifKey = booleanPreferencesKey("reading_reminders_enabled")
     private val thermalWidthKey = intPreferencesKey("thermal_paper_width_mm")
+    private val printerConnectionTypeKey = stringPreferencesKey("printer_connection_type")
+    private val printerDeviceNameKey = stringPreferencesKey("printer_device_name")
+    private val printerDeviceAddressKey = stringPreferencesKey("printer_device_address")
     private val stationPhoneKey = stringPreferencesKey("station_phone")
     private val stationAddressKey = stringPreferencesKey("station_address")
     private val defaultCountryCodeKey = stringPreferencesKey("default_country_code")
@@ -77,7 +83,10 @@ class ThemePreferencesRepository(private val context: Context) {
             invoiceNotificationsEnabled = prefs[invoiceNotifKey] ?: true,
             collectionNotificationsEnabled = prefs[collectionNotifKey] ?: true,
             readingRemindersEnabled = prefs[reminderNotifKey] ?: true,
-            thermalPaperWidthMm = if (prefs[thermalWidthKey] == 58) 58 else 80,
+            thermalPaperWidthMm = when (prefs[thermalWidthKey]) { 58 -> 58; 210 -> 210; else -> 80 },
+            printerConnectionType = prefs[printerConnectionTypeKey] ?: "SYSTEM",
+            printerDeviceName = prefs[printerDeviceNameKey] ?: "",
+            printerDeviceAddress = prefs[printerDeviceAddressKey] ?: "",
             stationPhone = prefs[stationPhoneKey] ?: "770002027",
             stationAddress = prefs[stationAddressKey] ?: "محطة العسل لتوليد وتوزيع الكهرباء",
             defaultCountryCode = prefs[defaultCountryCodeKey]?.filter { it.isDigit() }?.ifBlank { "967" } ?: "967"
@@ -171,7 +180,10 @@ class ThemePreferencesRepository(private val context: Context) {
             prefs[invoiceNotifKey] = next.invoiceNotificationsEnabled
             prefs[collectionNotifKey] = next.collectionNotificationsEnabled
             prefs[reminderNotifKey] = next.readingRemindersEnabled
-            prefs[thermalWidthKey] = if (next.thermalPaperWidthMm == 58) 58 else 80
+            prefs[thermalWidthKey] = when (next.thermalPaperWidthMm) { 58 -> 58; 210 -> 210; else -> 80 }
+            prefs[printerConnectionTypeKey] = next.printerConnectionType
+            prefs[printerDeviceNameKey] = next.printerDeviceName
+            prefs[printerDeviceAddressKey] = next.printerDeviceAddress
             prefs[stationPhoneKey] = next.stationPhone
             prefs[stationAddressKey] = next.stationAddress
             prefs[defaultCountryCodeKey] = next.defaultCountryCode.filter { it.isDigit() }.ifBlank { "967" }
