@@ -41,7 +41,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], qualifiers = "ar-rSA")
+@Config(sdk = [35], qualifiers = "ar-rSA")
 class Phase6AutomationStatementsSecurityTest {
 
     private lateinit var context: Context
