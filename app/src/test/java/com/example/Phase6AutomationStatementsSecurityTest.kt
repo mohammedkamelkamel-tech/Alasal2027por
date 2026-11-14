@@ -346,6 +346,7 @@ class Phase6AutomationStatementsSecurityTest {
     @Test
     fun `app lock enforces password fallback, persists per-user biometric opt-in in Room v5, auto-locks on background and inactivity timeout`(): Unit = runBlocking {
         coreRepository.ensureBaselineSeeded()
+        themePreferences.setAppLockEnabled(true)
         val vm = FoundationViewModel(
             repository = coreRepository,
             themePreferences = themePreferences,
