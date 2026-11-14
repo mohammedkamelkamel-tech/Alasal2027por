@@ -27,6 +27,8 @@ data class SubscriberEntity(
     val meterNumber: String,
     @ColumnInfo(name = "meter_seal_number")
     val meterSealNumber: String = "",
+    @ColumnInfo(name = "initial_meter_reading")
+    val initialMeterReading: Double = 0.0,
     @ColumnInfo(name = "address")
     val address: String,
     @ColumnInfo(name = "subscription_type")

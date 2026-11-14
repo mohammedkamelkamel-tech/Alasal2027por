@@ -57,6 +57,8 @@ data class SubscriberInput(
     val subscriptionDate: Long,
     val isActive: Boolean,
     val initialCreditBalance: Double = 0.0,
+    val initialArrearsAmount: Double = 0.0,
+    val initialMeterReading: Double = 0.0,
     val notes: String = ""
 )
 
@@ -509,6 +511,8 @@ class AlasalRepository(private val database: AlasalDatabase) {
         require(cleanMeter.isNotEmpty()) { "رقم العداد مطلوب" }
         require(input.customKwhPrice >= 0.0) { "سعر الكيلوواط غير صالح" }
         require(input.initialCreditBalance >= 0.0) { "الرصيد الدائن لا يمكن أن يكون سالباً" }
+        require(input.initialArrearsAmount >= 0.0) { "المبلغ السابق المستحق لا يمكن أن يكون سالباً" }
+        require(input.initialMeterReading >= 0.0) { "قراءة العداد السابقة لا يمكن أن تكون سالبة" }
 
         database.withTransaction {
             val actor = verifyPermission(
@@ -531,7 +535,8 @@ class AlasalRepository(private val database: AlasalDatabase) {
                         previousKwhPrice = null,
                         subscriptionDate = input.subscriptionDate,
                         isActive = input.isActive,
-                        currentArrearsAmount = 0.0,
+                        initialMeterReading = FinancialCalculator.roundCurrency(input.initialMeterReading),
+                        currentArrearsAmount = FinancialCalculator.roundCurrency(input.initialArrearsAmount),
                         currentCreditBalance = credit,
                         notes = input.notes.trim(),
                         createdAt = now,

@@ -240,25 +240,28 @@ class FoundationViewModel(
     }
 
     fun onAppWentToBackground(nowMillis: Long = System.currentTimeMillis()) {
+        // Keep the session unlocked while the user briefly switches apps.
+        // The configured inactivity timeout is evaluated on foreground return.
         lastBackgroundedAtMs = nowMillis
-        if (backupSessionPrefs.value.appLockEnabled) {
-            _isAppLocked.value = true
-        }
     }
 
     fun onAppReturnedToForeground(nowMillis: Long = System.currentTimeMillis()) {
         val prefs = backupSessionPrefs.value
         if (!prefs.appLockEnabled) {
             _isAppLocked.value = false
+            lastBackgroundedAtMs = 0L
             return
         }
         val timeoutMs = prefs.inactivityLockTimeoutSeconds * 1000L
+        val backgroundElapsed = if (lastBackgroundedAtMs > 0L) {
+            (nowMillis - lastBackgroundedAtMs).coerceAtLeast(0L)
+        } else 0L
+        val inactivityElapsed = (nowMillis - _lastInteractionAtMs.value).coerceAtLeast(0L)
         if (timeoutMs == 0L ||
-            (lastBackgroundedAtMs > 0L && nowMillis - lastBackgroundedAtMs >= 1000L) ||
-            (timeoutMs > 0L && nowMillis - _lastInteractionAtMs.value >= timeoutMs)
-        ) {
-            _isAppLocked.value = true
-        }
+            (lastBackgroundedAtMs > 0L && backgroundElapsed >= timeoutMs) ||
+            (timeoutMs > 0L && inactivityElapsed >= timeoutMs)
+        ) _isAppLocked.value = true
+        lastBackgroundedAtMs = 0L
     }
 
     fun checkInactivityTimeout(nowMillis: Long = System.currentTimeMillis()): Boolean {

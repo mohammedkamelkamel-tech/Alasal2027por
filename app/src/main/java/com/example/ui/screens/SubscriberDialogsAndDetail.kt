@@ -86,7 +86,9 @@ fun SubscriberFormDialog(
     var customPrice by remember {
         mutableStateOf((initialSubscriber?.customKwhPrice ?: defaultPricePerKwh).toString())
     }
-    var initialCredit by remember { mutableStateOf("0") }
+    var initialCredit by remember { mutableStateOf(initialSubscriber?.currentCreditBalance?.toString() ?: "0") }
+    var initialArrears by remember { mutableStateOf(initialSubscriber?.currentArrearsAmount?.toString() ?: "0") }
+    var initialMeterReading by remember { mutableStateOf(initialSubscriber?.initialMeterReading?.toString() ?: "0") }
     var isActive by remember { mutableStateOf(initialSubscriber?.isActive ?: true) }
     var notes by remember { mutableStateOf(initialSubscriber?.notes ?: "") }
     var subscriptionDaysOffset by remember { mutableIntStateOf(0) }
@@ -182,6 +184,20 @@ fun SubscriberFormDialog(
                 )
                 if (initialSubscriber == null) {
                     OutlinedTextField(
+                        value = initialArrears,
+                        onValueChange = { initialArrears = it },
+                        label = { Text("مبلغ سابق مستحق على المشترك") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("sub_input_initial_arrears")
+                    )
+                    OutlinedTextField(
+                        value = initialMeterReading,
+                        onValueChange = { initialMeterReading = it },
+                        label = { Text("آخر قراءة للعداد المستخدم سابقاً") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("sub_input_initial_meter_reading")
+                    )
+                    OutlinedTextField(
                         value = initialCredit,
                         onValueChange = { initialCredit = it },
                         label = { Text("الرصيد الدائن الافتتاحي") },
@@ -254,6 +270,8 @@ fun SubscriberFormDialog(
                                     subscriptionDate = effectiveSubscriptionDate,
                                     isActive = isActive,
                                     initialCreditBalance = initialCredit.toDoubleOrNull() ?: 0.0,
+                                    initialArrearsAmount = initialArrears.toDoubleOrNull() ?: 0.0,
+                                    initialMeterReading = initialMeterReading.toDoubleOrNull() ?: 0.0,
                                     notes = notes
                                 )
                             )

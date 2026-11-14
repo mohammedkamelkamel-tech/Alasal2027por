@@ -94,7 +94,7 @@ class BillingRepository(
             require(actor.isActive) { "تم رفض العملية: حساب (${actor.fullName}) موقوف" }
             val subscriber = subscriberDao.getById(input.subscriberId) ?: error("المشترك غير موجود")
             val lastReading = billingDao.getLatestReadingForSubscriber(input.subscriberId)
-            val previousReading = lastReading?.currentReading ?: 0.0
+            val previousReading = lastReading?.currentReading ?: subscriber.initialMeterReading
 
             if (input.currentReading < previousReading) {
                 require(input.allowLowReadingOverride) {

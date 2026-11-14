@@ -43,7 +43,7 @@ import com.example.data.local.entity.UserEntity
         AppSettingEntity::class,
         FinancialAuditLogEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AlasalDatabase : RoomDatabase() {
@@ -55,7 +55,7 @@ abstract class AlasalDatabase : RoomDatabase() {
 
     companion object {
         const val DATABASE_NAME = "alasal_2027.db"
-        const val CURRENT_VERSION = 5
+        const val CURRENT_VERSION = 6
 
         /**
          * Non-destructive migration from Phase 1 (v1) to Phase 2 (v2),
@@ -186,6 +186,15 @@ abstract class AlasalDatabase : RoomDatabase() {
             }
         }
 
+        /** Version 6 permits multiple readings per subscriber in one month and stores an initial meter reading. */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS index_meter_readings_subscriber_id_billing_period")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_meter_readings_subscriber_id_billing_period ON meter_readings(subscriber_id, billing_period)")
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN initial_meter_reading REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AlasalDatabase? = null
 
@@ -196,7 +205,7 @@ abstract class AlasalDatabase : RoomDatabase() {
                     AlasalDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)

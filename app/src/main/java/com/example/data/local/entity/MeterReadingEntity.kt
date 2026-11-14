@@ -23,7 +23,7 @@ import androidx.room.PrimaryKey
         )
     ],
     indices = [
-        Index(value = ["subscriber_id", "billing_period"], unique = true),
+        Index(value = ["subscriber_id", "billing_period"]),
         Index(value = ["recorded_by_user_id"]),
         Index(value = ["reading_date"])
     ]
