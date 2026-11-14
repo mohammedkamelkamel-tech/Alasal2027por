@@ -97,6 +97,7 @@ fun InvoicesManagementScreen(
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("ALL") }
     var dateWindowDays by remember { mutableIntStateOf(0) } // 0 = All, 7 = 7 days, 30 = 30 days
+    var selectedSubscriberForDetails by remember { mutableStateOf<SubscriberEntity?>(null) }
 
     val subscriberMap = remember(subscribers) { subscribers.associateBy { it.id } }
 
@@ -123,6 +124,23 @@ fun InvoicesManagementScreen(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Text(
+            text = "ملفات المشتركين — اضغط على الاسم لعرض الحساب الكامل",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(subscribers, key = { it.id }) { subscriber ->
+                FilterChip(
+                    selected = selectedSubscriberForDetails?.id == subscriber.id,
+                    onClick = { selectedSubscriberForDetails = subscriber },
+                    label = { Text(subscriber.fullName, maxLines = 1) }
+                )
+            }
+        }
         if (feedback != null) {
             StatusFeedbackBanner(
                 feedback = feedback,
@@ -320,6 +338,44 @@ fun InvoicesManagementScreen(
                 }
             }
         }
+    }
+
+    selectedSubscriberForDetails?.let { subscriber ->
+        val subscriberInvoices = invoices.filter { it.subscriberId == subscriber.id }
+            .sortedByDescending { it.issuedAt }
+        val subscriberCollections = collectionsWithReceipts
+            .filter { it.collection.subscriberId == subscriber.id }
+        AlertDialog(
+            onDismissRequest = { selectedSubscriberForDetails = null },
+            title = { Text("ملف المشترك: ${subscriber.fullName}") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("رقم المشترك: ${subscriber.subscriberCode}")
+                    Text("الهاتف: ${subscriber.phoneNumber.ifBlank { "-" }}")
+                    Text("العنوان: ${subscriber.address.ifBlank { "-" }}")
+                    Text("رقم العداد: ${subscriber.meterNumber}")
+                    Text("ختم العداد: ${subscriber.meterSealNumber.ifBlank { "-" }}")
+                    Text("سعر الكيلوواط: ${subscriber.customKwhPrice}")
+                    Text("آخر قراءة افتتاحية: ${subscriber.initialMeterReading}")
+                    Text("المتأخرات الحالية: ${subscriber.currentArrearsAmount}")
+                    Text("الرصيد الدائن: ${subscriber.currentCreditBalance}")
+                    HorizontalDivider()
+                    Text("الفواتير: ${subscriberInvoices.size}")
+                    Text("إجمالي المتبقي: ${subscriberInvoices.sumOf { it.remainingAmount }}")
+                    Text("عدد التحصيلات: ${subscriberCollections.size}")
+                    Text("إجمالي المحصل: ${subscriberCollections.sumOf { it.collection.amountPaid }}")
+                    subscriberInvoices.take(8).forEach { invoice ->
+                        Text("${invoice.invoiceNumber} — ${invoice.billingPeriod} — المتبقي ${invoice.remainingAmount}")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedSubscriberForDetails = null }) { Text("إغلاق") }
+            }
+        )
     }
 
     if (selectedInvoiceDetail != null) {
