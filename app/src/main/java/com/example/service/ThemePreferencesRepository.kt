@@ -169,7 +169,10 @@ class ThemePreferencesRepository(private val context: Context) {
                 invoiceNotificationsEnabled = prefs[invoiceNotifKey] ?: true,
                 collectionNotificationsEnabled = prefs[collectionNotifKey] ?: true,
                 readingRemindersEnabled = prefs[reminderNotifKey] ?: true,
-                thermalPaperWidthMm = if (prefs[thermalWidthKey] == 58) 58 else 80,
+                thermalPaperWidthMm = when (prefs[thermalWidthKey]) { 58 -> 58; 210 -> 210; else -> 80 },
+                printerConnectionType = prefs[printerConnectionTypeKey] ?: "SYSTEM",
+                printerDeviceName = prefs[printerDeviceNameKey] ?: "",
+                printerDeviceAddress = prefs[printerDeviceAddressKey] ?: "",
                 stationPhone = prefs[stationPhoneKey] ?: "770002027",
                 stationAddress = prefs[stationAddressKey] ?: "محطة العسل لتوليد وتوزيع الكهرباء",
                 defaultCountryCode = prefs[defaultCountryCodeKey]?.filter { it.isDigit() }?.ifBlank { "967" } ?: "967"
