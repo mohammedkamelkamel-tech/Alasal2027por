@@ -55,6 +55,9 @@ object DocumentPdfAndThermalService {
     private const val COLOR_HIGHLIGHT_BG = 0xFFFAF1D1.toInt()
     private const val COLOR_BORDER = 0xFFCBD5E1.toInt()
 
+    private fun cleanStationName(value: String): String =
+        value.replace("Alasal2027", "").replace("2027", "").replace(Regex("\\s+"), " ").trim().ifBlank { "محطة العسل" }
+
     private fun loadArabicTypeface(context: Context): Typeface {
         return runCatching {
             ResourcesCompat.getFont(context, R.font.cairo) ?: Typeface.DEFAULT
@@ -345,7 +348,7 @@ object DocumentPdfAndThermalService {
                 typeface = typeface,
                 title = "إيصال تحصيل نقدي / سداد فاتورة",
                 subtitle = "رقم الإيصال: ${receipt.receiptNumber} | التاريخ: ${dateFormat.format(Date(receipt.issuedAt))}",
-                stationName = receipt.stationNameSnapshot.ifEmpty { "محطة العسل 2027" },
+                stationName = cleanStationName(receipt.stationNameSnapshot),
                 stationPhone = receipt.stationPhoneSnapshot.ifEmpty { "770002027" },
                 stationAddress = stationAddress,
                 pageNumber = 1
@@ -467,7 +470,7 @@ object DocumentPdfAndThermalService {
                         typeface = typeface,
                         title = if (pageNum == 1) report.title else "${report.title} (تابع)",
                         subtitle = if (pageNum == 1) "${report.filterSummary} | ${dateFormat.format(Date())}" else report.filterSummary,
-                        stationName = "محطة العسل 2027 (Alasal2027)",
+                        stationName = "محطة العسل",
                         stationPhone = stationPhone,
                         stationAddress = stationAddress,
                         pageNumber = pageNum
@@ -565,7 +568,7 @@ object DocumentPdfAndThermalService {
             this.typeface = typeface
             textAlign = Paint.Align.RIGHT
         }
-        canvas.drawText(receipt.stationNameSnapshot.ifEmpty { "محطة العسل 2027" }, width - 165f, 70f, headerTitlePaint)
+        canvas.drawText(cleanStationName(receipt.stationNameSnapshot), width - 165f, 70f, headerTitlePaint)
         canvas.drawText("إيصال تحصيل رسمي: ${receipt.receiptNumber}", width - 165f, 114f, headerSubPaint)
 
         val lines = listOf(
@@ -687,7 +690,7 @@ object DocumentPdfAndThermalService {
             isFakeBoldText = true
         }
 
-        val titleText = receipt.stationNameSnapshot.ifEmpty { "محطة العسل 2027" }
+        val titleText = cleanStationName(receipt.stationNameSnapshot)
         val titleLayout = StaticLayout.Builder.obtain(titleText, 0, titleText.length, titlePaint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .build()
@@ -895,7 +898,7 @@ object DocumentPdfAndThermalService {
                     typeface = typeface,
                     title = if (pageNum == 1) "كشف النزول الميداني للمحصلين" else "كشف النزول الميداني للمحصلين (تابع)",
                     subtitle = "المنطقة: $areaFilterLabel | الحالة: $debtFilterLabel | ${dateFormat.format(Date())}",
-                    stationName = "محطة العسل 2027 (Alasal2027)",
+                    stationName = "محطة العسل",
                     stationPhone = stationPhone,
                     stationAddress = stationAddress,
                     pageNumber = pageNum
@@ -962,7 +965,7 @@ object DocumentPdfAndThermalService {
         val sb = StringBuilder()
         // UTF-8 BOM so Microsoft Excel & Google Sheets open Arabic headers cleanly without mojibake
         sb.append('\uFEFF')
-        sb.appendLine(esc("كشف التحصيل الميداني - محطة العسل 2027 - المنطقة: $areaFilterLabel"))
+        sb.appendLine(esc("كشف التحصيل الميداني - محطة العسل - المنطقة: $areaFilterLabel"))
         sb.appendLine(
             listOf(
                 "كود المشترك",
@@ -1009,7 +1012,7 @@ object DocumentPdfAndThermalService {
         }
         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar"))
         val text = buildString {
-            appendLine("✅ *${receipt.stationNameSnapshot.ifEmpty { "محطة العسل 2027" }}*")
+            appendLine("✅ *${cleanStationName(receipt.stationNameSnapshot)}*")
             appendLine("إيصال تحصيل رقم: *${receipt.receiptNumber}*")
             appendLine("المشترك: ${receipt.subscriberNameSnapshot} (${receipt.subscriberCodeSnapshot})")
             appendLine("رقم الفاتورة: ${receipt.invoiceNumberSnapshot}")
