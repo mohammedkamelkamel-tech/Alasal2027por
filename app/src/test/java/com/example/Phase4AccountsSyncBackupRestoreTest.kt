@@ -45,7 +45,7 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class Phase4AccountsSyncBackupRestoreTest {
 
     private lateinit var context: Context
