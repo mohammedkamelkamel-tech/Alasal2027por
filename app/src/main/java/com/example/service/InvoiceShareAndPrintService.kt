@@ -65,7 +65,7 @@ object InvoiceShareAndPrintService {
         val text = buildInvoiceShareText(invoice, subscriber)
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "فاتورة كهرباء ${invoice.invoiceNumber} - محطة العسل 2027")
+            putExtra(Intent.EXTRA_SUBJECT, "فاتورة كهرباء ${invoice.invoiceNumber} - محطة العسل")
             putExtra(Intent.EXTRA_TEXT, text)
         }
         val chooser = Intent.createChooser(sendIntent, "مشاركة الفاتورة").apply {
@@ -133,7 +133,7 @@ object InvoiceShareAndPrintService {
     ): String {
         val sub = statement.subscriber
         return buildString {
-            appendLine("⚡ *محطة العسل 2027 (Alasal2027)*")
+            appendLine("⚡ *محطة العسل*")
             appendLine("كشف حساب المشترك: *${sub.fullName}* (${sub.subscriberCode})")
             appendLine("رقم العداد: ${sub.meterNumber} | السعر الحالي: ${sub.customKwhPrice}/ك.و.س")
             appendLine("إجمالي الاستهلاك: ${statement.totalConsumedKwh} ك.و.س")
@@ -186,20 +186,12 @@ object InvoiceShareAndPrintService {
         val waIntent = Intent(Intent.ACTION_VIEW, waUri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching {
+        return runCatching {
             context.startActivity(waIntent)
-        }.onFailure {
-            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "كشف حساب ${statement.subscriber.fullName}")
-                putExtra(Intent.EXTRA_TEXT, text)
-            }
-            context.startActivity(
-                Intent.createChooser(sendIntent, "مشاركة كشف الحساب")
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+            null
+        }.getOrElse {
+            "تعذر فتح محادثة واتساب مباشرة. تأكد من تثبيت واتساب وصحة رقم المشترك."
         }
-        return null
     }
 
     fun printInvoice(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?, thermalWidthMm: Int = 58) {
@@ -229,7 +221,7 @@ object InvoiceShareAndPrintService {
             </head>
             <body>
               <div class="header">
-                <img class="logo" src="file:///android_res/drawable/img_alasal_logo_transparent.png" /><div class="title">محطة العسل 2027 (Alasal2027)</div>
+                <img class="logo" src="file:///android_res/drawable/img_alasal_logo_transparent.png" /><div class="title">محطة العسل</div>
                 <div class="sub">إشعار فاتورة استهلاك كهرباء — رقم ${invoice.invoiceNumber}</div>
               </div>
               <p><strong>المشترك:</strong> ${subscriber?.fullName ?: "-"} (${subscriber?.subscriberCode ?: "-"})</p>
@@ -257,7 +249,7 @@ object InvoiceShareAndPrintService {
             override fun onPageFinished(view: WebView?, url: String?) {
                 val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
                 if (printManager != null && view != null) {
-                    val jobName = "Alasal2027_${invoice.invoiceNumber}"
+                    val jobName = "Alasal_${invoice.invoiceNumber}"
                     val adapter = view.createPrintDocumentAdapter(jobName)
                     val width = if (thermalWidthMm == 80) 3150 else 2283
                     val attrs = PrintAttributes.Builder()
