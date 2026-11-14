@@ -65,7 +65,7 @@ data class ReceiptEntity(
     @ColumnInfo(name = "credit_after_receipt")
     val creditAfterReceipt: Double,
     @ColumnInfo(name = "station_name_snapshot")
-    val stationNameSnapshot: String = "محطة العسل 2027",
+    val stationNameSnapshot: String = "محطة العسل",
     @ColumnInfo(name = "station_phone_snapshot")
     val stationPhoneSnapshot: String = "",
     @ColumnInfo(name = "issued_at")
