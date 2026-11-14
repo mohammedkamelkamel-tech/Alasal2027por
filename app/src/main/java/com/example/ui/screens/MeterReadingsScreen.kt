@@ -87,7 +87,6 @@ fun MeterReadingsScreen(
     val alasalColors = LocalAlasalColors.current
     val arabicLocale = Locale.forLanguageTag("ar")
     val dateFormat = SimpleDateFormat("yyyy/MM/dd", arabicLocale)
-    val defaultPeriodFormat = SimpleDateFormat("yyyy-MM", Locale.US)
 
     var selectedSubscriberId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(subscribers) {
@@ -105,7 +104,6 @@ fun MeterReadingsScreen(
     val previousReadingValue = subscriberLatestReading?.currentReading ?: 0.0
 
     var currentReadingText by remember { mutableStateOf("") }
-    var billingPeriod by remember { mutableStateOf(defaultPeriodFormat.format(Date())) }
     var readingDaysOffset by remember { mutableIntStateOf(0) }
     var notes by remember { mutableStateOf("") }
     var photoUriString by remember { mutableStateOf<String?>(null) }
@@ -114,6 +112,8 @@ fun MeterReadingsScreen(
 
     val baseReadingTime = remember { System.currentTimeMillis() }
     val readingDate = baseReadingTime - readingDaysOffset * 86_400_000L
+    val previousReadingDate = subscriberLatestReading?.readingDate ?: selectedSubscriber?.subscriptionDate ?: readingDate
+    val billingPeriod = "${dateFormat.format(Date(previousReadingDate))} إلى ${dateFormat.format(Date(readingDate))}"
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -327,20 +327,19 @@ fun MeterReadingsScreen(
                                 }
                             }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedTextField(
                                     value = currentReadingText,
                                     onValueChange = { currentReadingText = it },
                                     label = { Text("القراءة الحالية *") },
                                     singleLine = true,
-                                    modifier = Modifier.weight(1f).testTag("reading_current_input")
+                                    modifier = Modifier.fillMaxWidth().testTag("reading_current_input")
                                 )
-                                OutlinedTextField(
-                                    value = billingPeriod,
-                                    onValueChange = { billingPeriod = it },
-                                    label = { Text("الفترة (مثال 2027-02) *") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f).testTag("reading_period_input")
+                                Text(
+                                    text = "فترة الاستهلاك: من ${dateFormat.format(Date(previousReadingDate))} إلى ${dateFormat.format(Date(readingDate))}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = alasalColors.gold,
+                                    modifier = Modifier.fillMaxWidth().testTag("reading_period_range")
                                 )
                             }
 
