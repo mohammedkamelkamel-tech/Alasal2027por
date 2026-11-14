@@ -1027,10 +1027,11 @@ object DocumentPdfAndThermalService {
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { context.startActivity(intent) }.onFailure {
-            val pdf = generateReceiptA4Pdf(context, receipt)
-            shareFile(context, pdf, "application/pdf", "مشاركة الإيصال")
+        return runCatching {
+            context.startActivity(intent)
+            null
+        }.getOrElse {
+            "تعذر فتح محادثة واتساب مباشرة. تأكد من تثبيت واتساب وصحة رقم المشترك."
         }
-        return null
     }
 }
