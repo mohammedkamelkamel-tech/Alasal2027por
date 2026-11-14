@@ -5,6 +5,9 @@ on:
     paths:
       - ".github/workflows/build-alasal-pro.yml"
       - "release/Alasal2027_project_source.zip"
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
   workflow_dispatch:
 
 permissions:
@@ -25,36 +28,27 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Extract project source
-        run: |
-          mkdir -p extracted
-          unzip -q release/Alasal2027_project_source.zip -d extracted
-          PROJECT_DIR="$(find extracted -name settings.gradle.kts -printf '%h\n' | head -n 1)"
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "settings.gradle.kts not found in source archive"
-            find extracted -maxdepth 3 -type f | head -n 80
-            exit 1
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
         continue-on-error: true
-        run: gradle -p "$PROJECT_DIR" clean :app:testDebugUnitTest --console=plain
+        run: gradle clean :app:testDebugUnitTest --console=plain
 
       - name: Build Debug APK
-        run: gradle -p "$PROJECT_DIR" :app:assembleDebug --console=plain
+        run: gradle :app:assembleDebug --console=plain
 
-      - name: Publish APK in repository
+      - name: Package updated project and APK
         run: |
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 1 -name '*.apk' -type f | head -n 1)"
-          test -n "$APK"
           mkdir -p release
-          cp "$APK" release/Alasal-Pro-debug.apk
+          cp app/build/outputs/apk/debug/*.apk release/Alasal-Pro-debug.apk
+          zip -qr release/Alasal2027_project_source.zip . \
+            -x ".git/*" ".gradle/*" "**/build/*" "build/*" "release/*" ".github/*"
+
+      - name: Publish APK and source archive
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add release/Alasal-Pro-debug.apk
-          git commit -m "Publish Alasal Pro debug APK"
+          git add release/Alasal-Pro-debug.apk release/Alasal2027_project_source.zip
+          git commit -m "Publish updated Alasal Pro APK and project source"
           git push
