@@ -87,7 +87,7 @@ class BillingRepository(
         actorUserId: Long? = null
     ): Result<Long> = runCatching {
         val period = input.billingPeriod.trim()
-        require(period.isNotEmpty()) { "الفترة المحاسبية مطلوبة (مثال: 2027-02)" }
+        require(period.isNotEmpty()) { "فترة القراءة مطلوبة" }
 
         database.withTransaction {
             val actor = coreRepository.resolveActorUser(actorUserId)
@@ -191,10 +191,10 @@ class BillingRepository(
             val now = System.currentTimeMillis()
             val storedInvSeq = systemDao.getSettingValue("last_invoice_sequence")?.toIntOrNull() ?: 0
             var sequenceNum = maxOf(storedInvSeq, billingDao.countInvoices()) + 1
-            var invoiceNumber = String.format(Locale.US, "INV-2027-%04d", sequenceNum)
+            var invoiceNumber = String.format(Locale.US, "INV-%04d", sequenceNum)
             while (billingDao.getInvoiceByNumber(invoiceNumber) != null) {
                 sequenceNum++
-                invoiceNumber = String.format(Locale.US, "INV-2027-%04d", sequenceNum)
+                invoiceNumber = String.format(Locale.US, "INV-%04d", sequenceNum)
             }
             systemDao.upsertSetting(
                 AppSettingEntity(
@@ -312,7 +312,7 @@ class BillingRepository(
         notes: String = "",
         actorUserId: Long? = null,
         collectedAt: Long = System.currentTimeMillis(),
-        stationName: String = "محطة العسل 2027",
+        stationName: String = "محطة العسل",
         stationPhone: String = "770002027"
     ): Result<Long> = runCatching {
         require(amountPaid > 0.0) { "مبلغ السداد يجب أن يكون أكبر من الصفر" }
@@ -351,10 +351,10 @@ class BillingRepository(
 
             val storedColSeq = systemDao.getSettingValue("last_collection_sequence")?.toIntOrNull() ?: 0
             var colSeq = maxOf(storedColSeq, collectionDao.countCollections()) + 1
-            var colRef = String.format(Locale.US, "COL-2027-%04d", colSeq)
+            var colRef = String.format(Locale.US, "COL-%04d", colSeq)
             while (collectionDao.getCollectionByReference(colRef) != null) {
                 colSeq++
-                colRef = String.format(Locale.US, "COL-2027-%04d", colSeq)
+                colRef = String.format(Locale.US, "COL-%04d", colSeq)
             }
             systemDao.upsertSetting(
                 AppSettingEntity(
@@ -409,10 +409,10 @@ class BillingRepository(
 
             val storedRcpSeq = systemDao.getSettingValue("last_receipt_sequence")?.toIntOrNull() ?: 0
             var rcpSeq = maxOf(storedRcpSeq, collectionDao.countReceipts()) + 1
-            var rcpNum = String.format(Locale.US, "RCP-2027-%04d", rcpSeq)
+            var rcpNum = String.format(Locale.US, "RCP-%04d", rcpSeq)
             while (collectionDao.getReceiptByNumber(rcpNum) != null) {
                 rcpSeq++
-                rcpNum = String.format(Locale.US, "RCP-2027-%04d", rcpSeq)
+                rcpNum = String.format(Locale.US, "RCP-%04d", rcpSeq)
             }
             systemDao.upsertSetting(
                 AppSettingEntity(
