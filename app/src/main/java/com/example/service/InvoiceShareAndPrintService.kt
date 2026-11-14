@@ -2,15 +2,20 @@ package com.example.service
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
+import android.view.View
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.content.FileProvider
 import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.SubscriberEntity
 import java.io.File
+import java.io.FileOutputStream
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -157,18 +162,86 @@ object InvoiceShareAndPrintService {
         defaultCountryCode: String = "967"
     ): String? {
         val norm = normalizePhoneForWhatsApp(subscriber?.phoneNumber, defaultCountryCode)
-        if (!norm.isValid) {
-            return norm.warningMessage
-        }
-        val text = buildInvoiceShareText(invoice, subscriber)
-        val waUri = buildWhatsAppChatUri(norm.normalizedDigits, text)
-        val waIntent = Intent(Intent.ACTION_VIEW, waUri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
+        if (!norm.isValid) return norm.warningMessage
+
+        // Render the same narrow thermal layout used for printing, then share it as an image.
+        val widthPx = 384
+        val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar"))
+        val html = """
+            <html lang="ar" dir="rtl"><head><meta charset="utf-8"/>
+            <style>
+              @page { size: 58mm auto; margin: 2mm; }
+              html,body { width: 54mm; margin:0; padding:0; }
+              body { box-sizing:border-box; padding:10px; color:#0D263C; font-family:sans-serif; font-size:12px;
+                background:#fff url('file:///android_res/drawable/img_alasal_watermark.png') center center/75% auto no-repeat; }
+              header { text-align:center; border-bottom:2px solid #D4AF37; padding-bottom:8px; margin-bottom:10px; }
+              header img { width:48px; height:48px; object-fit:contain; }
+              h3 { margin:5px 0; font-size:16px; }
+              p { margin:6px 0; line-height:1.5; overflow-wrap:anywhere; }
+              table { width:100%; border-collapse:collapse; table-layout:fixed; }
+              td { border-bottom:1px solid #CBD5E1; padding:6px 3px; font-size:11px; overflow-wrap:anywhere; }
+              td:first-child { font-weight:bold; width:48%; }
+              .total { font-weight:bold; background:#FAF1D1; }
+              footer { text-align:center; font-size:10px; margin-top:10px; }
+            </style></head><body>
+            <header><img src="file:///android_res/drawable/img_alasal_logo_transparent.png"/>
+            <h3>محطة العسل 2027</h3><div>فاتورة كهرباء — ${invoice.invoiceNumber}</div></header>
+            <p><b>المشترك:</b> ${subscriber?.fullName ?: "-"} (${subscriber?.subscriberCode ?: "-"})</p>
+            <p><b>العداد:</b> ${subscriber?.meterNumber ?: "-"} | <b>الفترة:</b> ${invoice.billingPeriod}</p>
+            <table>
+              <tr><td>القراءة السابقة / الحالية</td><td>${invoice.previousReading} / ${invoice.currentReading}</td></tr>
+              <tr><td>الاستهلاك</td><td>${invoice.consumedKwh} ك.و.س</td></tr>
+              <tr><td>سعر الكيلوواط</td><td>${invoice.unitPriceApplied}</td></tr>
+              <tr><td>قيمة الاستهلاك</td><td>${invoice.energyAmount}</td></tr>
+              <tr><td>المتأخرات</td><td>${invoice.previousArrearsApplied}</td></tr>
+              <tr><td>الرصيد الدائن المخصوم</td><td>${invoice.creditDeducted}</td></tr>
+              <tr class="total"><td>الإجمالي المطلوب</td><td>${invoice.netPayableAmount}</td></tr>
+              <tr><td>المدفوع</td><td>${invoice.paidAmount}</td></tr>
+              <tr class="total"><td>المتبقي</td><td>${invoice.remainingAmount}</td></tr>
+            </table>
+            <footer>تاريخ الإصدار: ${dateFormat.format(Date(invoice.issuedAt))}<br/>حالة الفاتورة: ${translateStatus(invoice.status)}</footer>
+            </body></html>
+        """.trimIndent()
+
         runCatching {
-            context.startActivity(waIntent)
+            val webView = WebView(context)
+            webView.settings.javaScriptEnabled = false
+            webView.setBackgroundColor(android.graphics.Color.WHITE)
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (view == null) return
+                    runCatching {
+                        view.measure(
+                            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                        )
+                        val heightPx = view.measuredHeight.coerceIn(1, 12000)
+                        view.layout(0, 0, widthPx, heightPx)
+                        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+                        view.draw(Canvas(bitmap))
+                        val dir = File(context.cacheDir, "invoice_shares").apply { mkdirs() }
+                        val file = File(dir, "Invoice_${invoice.invoiceNumber}.png")
+                        FileOutputStream(file).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        bitmap.recycle()
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/png"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            putExtra(Intent.EXTRA_TEXT, "فاتورة محطة العسل — ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName ?: ""}")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(Intent.createChooser(send, "إرسال صورة الفاتورة عبر واتساب"))
+                    }.onFailure {
+                        shareInvoiceText(context, invoice, subscriber)
+                    }.also { view.destroy() }
+                }
+            }
+            webView.loadDataWithBaseURL("file:///android_res/drawable/", html, "text/html", "UTF-8", null)
         }.onFailure {
             shareInvoiceText(context, invoice, subscriber)
+            return "تعذر تجهيز صورة الفاتورة؛ تم فتح مشاركة نص الفاتورة بدلاً منها."
         }
         return null
     }
