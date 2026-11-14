@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.example.data.local.dao.TableRowCounts
 import com.example.data.local.database.AlasalDatabase
 import com.example.data.local.entity.AppSettingEntity
+import com.example.data.local.entity.ArrearsEntity
 import com.example.data.local.entity.CreditBalanceEntity
 import com.example.data.local.entity.FinancialAuditLogEntity
 import com.example.data.local.entity.KwhTariffEntity
@@ -552,6 +553,20 @@ class AlasalRepository(private val database: AlasalDatabase) {
                             balanceAfter = credit,
                             recordedAt = now,
                             notes = "رصيد دائن افتتاحي عند تسجيل المشترك"
+                        )
+                    )
+                }
+                val openingArrears = FinancialCalculator.roundCurrency(input.initialArrearsAmount)
+                if (openingArrears > 0.0) {
+                    billingDao.insertArrears(
+                        ArrearsEntity(
+                            subscriberId = newId,
+                            sourceInvoiceId = null,
+                            originalAmount = openingArrears,
+                            remainingAmount = openingArrears,
+                            status = "OPEN",
+                            recordedAt = now,
+                            notes = "مبلغ سابق مستحق عند تسجيل المشترك"
                         )
                     )
                 }
