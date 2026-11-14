@@ -17,7 +17,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], qualifiers = "ar-rSA-w411dp-h915dp")
+@Config(sdk = [35], qualifiers = "ar-rSA-w411dp-h915dp")
 class Phase6UiAndSecurityRobolectricTest {
 
     @get:Rule
