@@ -31,7 +31,7 @@ import java.io.File
 import kotlin.system.measureTimeMillis
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class Phase5FinalAuditAndPerformanceTest {
 
     private lateinit var context: Context
