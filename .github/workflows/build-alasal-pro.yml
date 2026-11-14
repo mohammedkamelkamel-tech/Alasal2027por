@@ -46,7 +46,6 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Run unit tests
-        continue-on-error: true
         run: gradle clean :app:testDebugUnitTest --console=plain
 
       - name: Build Debug APK
@@ -58,6 +57,16 @@ jobs:
           cp app/build/outputs/apk/debug/*.apk release/Alasal-Pro-debug.apk
           zip -qr release/Alasal2027_project_source.zip . \
             -x ".git/*" ".gradle/*" "**/build/*" "build/*" "release/*" ".github/*"
+
+      - name: Upload APK and source archive artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: alasal-pro-build
+          path: |
+            release/Alasal-Pro-debug.apk
+            release/Alasal2027_project_source.zip
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Publish APK and source archive
         run: |
