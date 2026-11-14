@@ -191,10 +191,12 @@ class BillingRepository(
             val now = System.currentTimeMillis()
             val storedInvSeq = systemDao.getSettingValue("last_invoice_sequence")?.toIntOrNull() ?: 0
             var sequenceNum = maxOf(storedInvSeq, billingDao.countInvoices()) + 1
-            var invoiceNumber = String.format(Locale.US, "INV-%04d", sequenceNum)
+            val invoiceYear = reading.billingPeriod.substringBefore('-').takeIf { it.length == 4 && it.all(Char::isDigit) }
+                ?: java.time.Year.now().value.toString()
+            var invoiceNumber = String.format(Locale.US, "INV-%s-%04d", invoiceYear, sequenceNum)
             while (billingDao.getInvoiceByNumber(invoiceNumber) != null) {
                 sequenceNum++
-                invoiceNumber = String.format(Locale.US, "INV-%04d", sequenceNum)
+                invoiceNumber = String.format(Locale.US, "INV-%s-%04d", invoiceYear, sequenceNum)
             }
             systemDao.upsertSetting(
                 AppSettingEntity(
@@ -409,10 +411,12 @@ class BillingRepository(
 
             val storedRcpSeq = systemDao.getSettingValue("last_receipt_sequence")?.toIntOrNull() ?: 0
             var rcpSeq = maxOf(storedRcpSeq, collectionDao.countReceipts()) + 1
-            var rcpNum = String.format(Locale.US, "RCP-%04d", rcpSeq)
+            val receiptYear = invoice.billingPeriod.substringBefore('-').takeIf { it.length == 4 && it.all(Char::isDigit) }
+                ?: java.time.Year.now().value.toString()
+            var rcpNum = String.format(Locale.US, "RCP-%s-%04d", receiptYear, rcpSeq)
             while (collectionDao.getReceiptByNumber(rcpNum) != null) {
                 rcpSeq++
-                rcpNum = String.format(Locale.US, "RCP-%04d", rcpSeq)
+                rcpNum = String.format(Locale.US, "RCP-%s-%04d", receiptYear, rcpSeq)
             }
             systemDao.upsertSetting(
                 AppSettingEntity(
