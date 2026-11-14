@@ -284,8 +284,8 @@ class AlasalDatabaseAndRelationsTest {
         )
     }
 
-    @Test(expected = SQLiteConstraintException::class)
-    fun `duplicate reading for same subscriber and billing period is rejected`() = runTest {
+    @Test
+    fun `multiple readings for same subscriber and billing period are allowed in version 6`() = runTest {
         val subscriberId = database.subscriberDao().insert(
             SubscriberEntity(
                 subscriberCode = "SUB-R1",
@@ -314,6 +314,7 @@ class AlasalDatabaseAndRelationsTest {
                 consumedKwh = 40.0
             )
         )
+        assertEquals(2, database.billingDao().getAllMeterReadingsOnce().size)
     }
 
     @Test(expected = SQLiteConstraintException::class)
