@@ -126,11 +126,12 @@ class AlasalUiAndLaunchRobolectricTest {
         composeTestRule.onNodeWithTag("status_feedback_banner").assertIsDisplayed()
 
         // 4. Navigate to Invoices, inspect invoice, record partial payment, and reprice
+        val expectedInvoiceNumber = "INV-${java.time.Year.now().value}-0001"
         composeTestRule.onNodeWithTag("nav_item_invoices").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithTag("invoice_card_INV-2027-0001").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("invoice_card_$expectedInvoiceNumber").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("invoice_detail_btn_INV-2027-0001").performClick()
+        composeTestRule.onNodeWithTag("invoice_detail_btn_$expectedInvoiceNumber").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             composeTestRule.onAllNodesWithTag("invoice_pay_button").fetchSemanticsNodes().isNotEmpty()
         }
