@@ -37,12 +37,12 @@ jobs:
 
       - name: Generate local debug signing key
         run: |
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA -keysize 2048 -validity 10000 \
+          keytool -genkeypair -v \\
+            -keystore debug.keystore \\
+            -storepass android \\
+            -alias androiddebugkey \\
+            -keypass android \\
+            -keyalg RSA -keysize 2048 -validity 10000 \\
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Run unit tests
@@ -55,7 +55,7 @@ jobs:
         run: |
           mkdir -p release
           cp app/build/outputs/apk/debug/*.apk release/Alasal-Pro-debug.apk
-          zip -qr release/Alasal2027_project_source.zip . \
+          zip -qr release/Alasal2027_project_source.zip . \\
             -x ".git/*" ".gradle/*" "**/build/*" "build/*" "release/*" ".github/*"
 
       - name: Upload APK and source archive artifacts
@@ -75,3 +75,5 @@ jobs:
           git add release/Alasal-Pro-debug.apk release/Alasal2027_project_source.zip
           git commit -m "Publish updated Alasal Pro APK and project source"
           git push
+
+# Build trigger marker: run the existing project build without changing app source.
