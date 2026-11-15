@@ -222,6 +222,12 @@ fun InvoicesManagementScreen(
                                 label = { Text(label) }
                             )
                         }
+                    if (notificationPrefs.bulkInvoiceSmsEnabled) {
+                        Button(onClick = { showBulkSmsConfirmation = true }, enabled = filteredInvoices.isNotEmpty(), modifier = Modifier.fillMaxWidth().height(48.dp).testTag("bulk_invoice_sms_button")) {
+                            Text("إرسال جميع الفواتير SMS (${filteredInvoices.size})")
+                        }
+                    }
+                    smsSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
                     }
                 }
             }
