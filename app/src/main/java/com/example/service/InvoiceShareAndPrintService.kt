@@ -3,6 +3,7 @@ package com.example.service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -10,12 +11,17 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.telephony.SmsManager
 import android.view.View
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
+import android.text.TextPaint
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.content.FileProvider
+import com.example.R
 import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.SubscriberEntity
 import java.io.File
@@ -175,76 +181,86 @@ object InvoiceShareAndPrintService {
         }
     }
 
-    private fun generateInvoicePngImage(
-        context: Context,
-        invoice: InvoiceEntity,
-        subscriber: SubscriberEntity?
-    ): File {
-        val dir = File(context.cacheDir, "shared_images").apply { mkdirs() }
-        val file = File(dir, "Invoice_${invoice.invoiceNumber}.png")
+    private fun generateInvoicePngImage(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?): File {
         val width = 900
-        val height = 1180
+        val height = 1420
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
         val navy = Color.rgb(13, 38, 60)
         val gold = Color.rgb(212, 175, 55)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = navy
-            textSize = 34f
-            textAlign = Paint.Align.RIGHT
-            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        val border = Color.rgb(203, 213, 225)
+        canvas.drawColor(Color.WHITE)
+        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = navy; textSize = 31f; typeface = Typeface.create("sans-serif", Typeface.NORMAL) }
+        fun drawRtl(text: String, x: Int, y: Int, cellWidth: Int, size: Float, bold: Boolean = false, color: Int = navy) {
+            textPaint.textSize = size
+            textPaint.color = color
+            textPaint.typeface = Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
+            val layout = StaticLayout.Builder.obtain(text, 0, text.length, textPaint, cellWidth)
+                .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+                .setTextDirection(TextDirectionHeuristics.RTL)
+                .setIncludePad(false).build()
+            canvas.save()
+            canvas.translate(x.toFloat(), y.toFloat())
+            layout.draw(canvas)
+            canvas.restore()
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), 170f, Paint().apply { color = navy })
-        paint.color = Color.WHITE
-        paint.textSize = 46f
-        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-        canvas.drawText("محطة العسل", width - 55f, 72f, paint)
-        paint.textSize = 30f
-        canvas.drawText("فاتورة كهرباء رقم: ${invoice.invoiceNumber}", width - 55f, 125f, paint)
-        canvas.drawRect(0f, 170f, width.toFloat(), 180f, Paint().apply { color = gold })
-        paint.color = navy
-        paint.textSize = 32f
-        paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        val logo = BitmapFactory.decodeResource(context.resources, R.drawable.img_alasal_logo_transparent)
+        if (logo != null) {
+            val side = 112f
+            val dst = RectF((width-side)/2f, 35f, (width+side)/2f, 35f+side)
+            canvas.drawBitmap(logo, null, dst, basePaint)
+            logo.recycle()
+        }
+        drawRtl("محطة العسل", 45, 165, width-90, 52f, true)
+        drawRtl("إشعار فاتورة استهلاك كهرباء — رقم ${invoice.invoiceNumber}", 45, 230, width-90, 30f, false, Color.DKGRAY)
+        basePaint.color = gold
+        canvas.drawRect(45f, 292f, width-45f, 301f, basePaint)
+        drawRtl("المشترك: ${subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"}", 55, 330, width-110, 34f, true)
+        drawRtl("رقم العداد: ${subscriber?.meterNumber ?: "-"}  |  الفترة: ${invoice.billingPeriod}", 55, 382, width-110, 30f)
+        val left = 45f
+        val right = width-45f
+        val split = width/2f
+        var y = 450f
+        val rowHeight = 68f
         val rows = listOf(
-            "اسم المشترك: ${subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"}",
-            "رقم المشترك: ${subscriber?.subscriberCode ?: "-"}",
-            "رقم العداد: ${subscriber?.meterNumber ?: "-"}",
-            "الفترة: ${invoice.billingPeriod}",
-            "القراءة السابقة: ${invoice.previousReading}",
-            "القراءة الحالية: ${invoice.currentReading}",
-            "الاستهلاك (ك.و.س): ${invoice.consumedKwh}",
-            "سعر الكيلوواط: ${invoice.unitPriceApplied} ريال",
-            "قيمة الاستهلاك: ${invoice.energyAmount} ريال",
-            "المتأخرات المرحلة: ${invoice.previousArrearsApplied} ريال",
-            "الرصيد الدائن المخصوم: ${invoice.creditDeducted} ريال",
-            "صافي الفاتورة: ${invoice.netPayableAmount} ريال",
-            "المدفوع: ${invoice.paidAmount} ريال",
-            "المتبقي: ${invoice.remainingAmount} ريال",
-            "الحالة: ${translateStatus(invoice.status)}",
-            "تاريخ الإصدار: ${SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar")).format(Date(invoice.issuedAt))}"
+            "القراءة السابقة / الحالية" to "${invoice.previousReading} ← ${invoice.currentReading}",
+            "الاستهلاك (ك.و.س)" to "${invoice.consumedKwh}",
+            "سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}",
+            "قيمة الاستهلاك الحالي" to "${invoice.energyAmount}",
+            "المتأخرات المرحلة" to "${invoice.previousArrearsApplied}",
+            "الرصيد الدائن المخصوم" to "${invoice.creditDeducted}",
+            "صافي الفاتورة المطلوب" to "${invoice.netPayableAmount}",
+            "المدفوع" to "${invoice.paidAmount}",
+            "المتبقي" to "${invoice.remainingAmount}"
         )
-        var y = 250f
-        rows.forEachIndexed { index, row ->
-            if (index % 2 == 0) {
-                canvas.drawRoundRect(35f, y - 42f, width - 35f, y + 16f, 12f, 12f,
-                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF3F6F9.toInt() })
-            }
-            canvas.drawText(row, width - 60f, y, paint)
-            y += 62f
+        basePaint.color = navy
+        canvas.drawRect(left, y, right, y+rowHeight, basePaint)
+        drawRtl("البيان", (split+8).toInt(), (y+17).toInt(), (right-split-24).toInt(), 30f, true, Color.WHITE)
+        drawRtl("القيمة", (left+12).toInt(), (y+17).toInt(), (split-left-24).toInt(), 30f, true, Color.WHITE)
+        y += rowHeight
+        rows.forEachIndexed { index, pair ->
+            val highlighted = index == 6 || index == 8
+            basePaint.color = if (highlighted) Color.rgb(250, 241, 209) else if (index % 2 == 0) Color.WHITE else Color.rgb(246, 248, 250)
+            canvas.drawRect(left, y, right, y+rowHeight, basePaint)
+            basePaint.color = border
+            basePaint.style = Paint.Style.STROKE
+            basePaint.strokeWidth = 2f
+            canvas.drawRect(left, y, right, y+rowHeight, basePaint)
+            canvas.drawLine(split, y, split, y+rowHeight, basePaint)
+            basePaint.style = Paint.Style.FILL
+            drawRtl(pair.first, (split+10).toInt(), (y+18).toInt(), (right-split-24).toInt(), 27f, highlighted)
+            drawRtl(pair.second, (left+12).toInt(), (y+18).toInt(), (split-left-24).toInt(), 29f, highlighted)
+            y += rowHeight
         }
-        paint.color = gold
-        paint.strokeWidth = 5f
-        canvas.drawLine(45f, y + 8f, width - 45f, y + 8f, paint)
-        paint.color = navy
-        paint.textSize = 25f
-        paint.textAlign = Paint.Align.CENTER
-        canvas.drawText("شكراً لثقتكم بمحطة العسل", width / 2f, height - 48f, paint)
+        drawRtl("تاريخ الإصدار: ${SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar")).format(Date(invoice.issuedAt))}  |  الحالة: ${translateStatus(invoice.status)}", 55, (y+35).toInt(), width-110, 24f, false, Color.DKGRAY)
+        drawRtl("شكراً لثقتكم بمحطة العسل", 45, height-75, width-90, 28f, true)
+        val dir = File(context.cacheDir, "shared_images").apply { mkdirs() }
+        val file = File(dir, "Invoice_${invoice.invoiceNumber}.png")
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
         return file
     }
-
     private fun sendImageToWhatsApp(
         context: Context,
         imageFile: File,
