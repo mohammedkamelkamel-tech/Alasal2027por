@@ -37,6 +37,10 @@ import java.util.Locale
  * RTL HTML invoice printing via Android PrintManager, generic sharing, and WhatsApp dispatch.
  */
 object InvoiceShareAndPrintService {
+    private fun isInvoiceUnitPriceVisible(context: Context): Boolean =
+        context.getSharedPreferences("alasal_theme_prefs", Context.MODE_PRIVATE)
+            .getBoolean("invoice_unit_price_visible", true)
+
 
     fun copyMeterPhotoToPrivateStorage(context: Context, sourceUri: Uri, subscriberCode: String): String? {
         return runCatching {
@@ -52,7 +56,7 @@ object InvoiceShareAndPrintService {
         }.getOrNull()
     }
 
-    fun buildInvoiceShareText(invoice: InvoiceEntity, subscriber: SubscriberEntity?): String {
+    fun buildInvoiceShareText(invoice: InvoiceEntity, subscriber: SubscriberEntity?, showUnitPrice: Boolean = true): String {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("ar"))
         val subName = subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"
         fun amount(value: Double): String =
@@ -64,7 +68,7 @@ object InvoiceShareAndPrintService {
             appendLine("📊 القراءة السابقة: ${amount(invoice.previousReading)} ك.و.س")
             appendLine("📈 القراءة الحالية: ${amount(invoice.currentReading)} ك.و.س")
             appendLine("⚡ الاستهلاك: ${amount(invoice.consumedKwh)} ك.و.س")
-            appendLine("💵 سعر الكيلو: ${amount(invoice.unitPriceApplied)} ريال")
+            if (showUnitPrice) appendLine("💵 سعر الكيلو: ${amount(invoice.unitPriceApplied)} ريال")
             appendLine("💰 إجمالي المستحق: ${amount(invoice.netPayableAmount)} ريال يمني")
             appendLine("💵 المدفوع: ${amount(invoice.paidAmount)} ريال")
             appendLine("🔻 المتبقي: ${amount(invoice.remainingAmount)} ريال")
@@ -73,7 +77,7 @@ object InvoiceShareAndPrintService {
     }
 
     fun shareInvoiceText(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?) {
-        val text = buildInvoiceShareText(invoice, subscriber)
+        val text = buildInvoiceShareText(invoice, subscriber, isInvoiceUnitPriceVisible(context))
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "فاتورة كهرباء ${invoice.invoiceNumber} - محطة العسل")
@@ -227,7 +231,7 @@ object InvoiceShareAndPrintService {
         val rows = listOf(
             "القراءة السابقة / الحالية" to "${invoice.previousReading} ← ${invoice.currentReading}",
             "الاستهلاك (ك.و.س)" to "${invoice.consumedKwh}",
-            "سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}",
+            *if (isInvoiceUnitPriceVisible(context)) listOf("سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}") else emptyList(),
             "قيمة الاستهلاك الحالي" to "${invoice.energyAmount}",
             "المتأخرات المرحلة" to "${invoice.previousArrearsApplied}",
             "الرصيد الدائن المخصوم" to "${invoice.creditDeducted}",
@@ -366,7 +370,7 @@ object InvoiceShareAndPrintService {
                 <tr><th>البيان</th><th>القيمة</th></tr>
                 <tr><td>القراءة السابقة / الحالية</td><td>${invoice.previousReading} ← ${invoice.currentReading}</td></tr>
                 <tr><td>الاستهلاك (ك.و.س)</td><td>${invoice.consumedKwh}</td></tr>
-                <tr><td>سعر الكيلوواط المطبق</td><td>${invoice.unitPriceApplied}</td></tr>
+                ${if (isInvoiceUnitPriceVisible(context)) "<tr><td>سعر الكيلوواط المطبق</td><td>${invoice.unitPriceApplied}</td></tr>" else ""}
                 <tr><td>قيمة الاستهلاك الحالي</td><td>${invoice.energyAmount}</td></tr>
                 <tr><td>المتأخرات المرحلة</td><td>${invoice.previousArrearsApplied}</td></tr>
                 <tr><td>الرصيد الدائن المخصوم</td><td>${invoice.creditDeducted}</td></tr>
