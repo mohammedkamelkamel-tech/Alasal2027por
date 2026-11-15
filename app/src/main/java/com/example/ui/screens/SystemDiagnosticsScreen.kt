@@ -341,6 +341,28 @@ fun SystemDiagnosticsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
+                                    Text("إظهار سعر الكيلو في الفاتورة", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "عند التعطيل يُخفى السعر من الفاتورة المطبوعة والمشاركة دون التأثير على الحساب",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = notificationPrefs.invoiceUnitPriceVisible,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateNotificationPrefs { it.copy(invoiceUnitPriceVisible = enabled) }
+                                    },
+                                    modifier = Modifier.testTag("invoice_unit_price_visible_switch")
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text("السماح بإرسال جميع الفواتير عبر SMS", style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         "يظهر زر الإرسال الجماعي في شاشة الفواتير عند التفعيل",
