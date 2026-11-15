@@ -220,7 +220,10 @@ fun InvoicesManagementScreen(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         listOf(0 to "كل التواريخ", 7 to "آخر 7 أيام", 30 to "آخر 30 يوماً").forEach { (days, label) ->
                             FilterChip(
                                 selected = dateWindowDays == days,
@@ -228,12 +231,19 @@ fun InvoicesManagementScreen(
                                 label = { Text(label) }
                             )
                         }
+                    }
+
                     if (notificationPrefs.bulkInvoiceSmsEnabled) {
-                        Button(onClick = { showBulkSmsConfirmation = true }, enabled = filteredInvoices.isNotEmpty(), modifier = Modifier.fillMaxWidth().height(48.dp).testTag("bulk_invoice_sms_button")) {
+                        Button(
+                            onClick = { showBulkSmsConfirmation = true },
+                            enabled = filteredInvoices.isNotEmpty(),
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("bulk_invoice_sms_button")
+                        ) {
                             Text("إرسال جميع الفواتير SMS (${filteredInvoices.size})")
                         }
                     }
-                    smsSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+                    smsSummary?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
