@@ -98,6 +98,23 @@ fun InvoicesManagementScreen(
     var statusFilter by remember { mutableStateOf("ALL") }
     var dateWindowDays by remember { mutableIntStateOf(0) } // 0 = All, 7 = 7 days, 30 = 30 days
     var selectedSubscriberForDetails by remember { mutableStateOf<SubscriberEntity?>(null) }
+    var smsSummary by remember { mutableStateOf<String?>(null) }
+    var showBulkSmsConfirmation by remember { mutableStateOf(false) }
+    fun dispatchBulkSms() {
+        var sent = 0
+        var failed = 0
+        filteredInvoices.forEach { invoice ->
+            val subscriber = subscribers.firstOrNull { it.id == invoice.subscriberId }
+            if (subscriber == null) failed++ else {
+                val error = InvoiceShareAndPrintService.sendInvoiceSms(context, invoice, subscriber, notificationPrefs.defaultCountryCode)
+                if (error == null) sent++ else failed++
+            }
+        }
+        smsSummary = "تم طلب إرسال $sent فاتورة، وتعذر إرسال $failed فاتورة."
+    }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) dispatchBulkSms() else smsSummary = "لم تمنح التطبيق إذن إرسال الرسائل SMS."
+    }
 
     val subscriberMap = remember(subscribers) { subscribers.associateBy { it.id } }
 
