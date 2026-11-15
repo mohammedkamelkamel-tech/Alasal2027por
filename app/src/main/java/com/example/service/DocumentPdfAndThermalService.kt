@@ -1007,34 +1007,22 @@ object DocumentPdfAndThermalService {
         defaultCountryCode: String = "967"
     ): String? {
         val norm = InvoiceShareAndPrintService.normalizePhoneForWhatsApp(subscriberPhone, defaultCountryCode)
-        if (!norm.isValid) {
-            return norm.warningMessage
-        }
-        val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar"))
-        val text = buildString {
-            appendLine("✅ *${cleanStationName(receipt.stationNameSnapshot)}*")
-            appendLine("إيصال تحصيل رقم: *${receipt.receiptNumber}*")
-            appendLine("المشترك: ${receipt.subscriberNameSnapshot} (${receipt.subscriberCodeSnapshot})")
-            appendLine("رقم الفاتورة: ${receipt.invoiceNumberSnapshot}")
-            appendLine("المبلغ السابق: ${receipt.previousBalance}")
-            appendLine("المبلغ المحصل: *${receipt.amount}*")
-            appendLine("المتبقي بعد التحصيل: ${receipt.balanceAfterReceipt}")
-            if (receipt.creditAfterReceipt > 0.0) {
-                appendLine("الرصيد الدائن: ${receipt.creditAfterReceipt}")
-            }
-            appendLine("المحصل: ${receipt.collectorNameSnapshot}")
-            appendLine("طريقة السداد: ${StationReportGenerator.translatePaymentMethod(receipt.paymentMethod)}")
-            append("التاريخ: ${dateFormat.format(Date(receipt.issuedAt))}")
-        }
-        val uri = InvoiceShareAndPrintService.buildWhatsAppChatUri(norm.normalizedDigits, text)
-        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
+        if (!norm.isValid) return norm.warningMessage
         return runCatching {
+            val image = generateReceiptPngImage(context, receipt)
+            val uri = getShareUri(context, image)
+            val caption = "إيصال تحصيل رقم ${receipt.receiptNumber} للمشترك ${receipt.subscriberNameSnapshot}"
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TEXT, caption)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage("com.whatsapp")
+            }
             context.startActivity(intent)
             null
         }.getOrElse {
-            "تعذر فتح محادثة واتساب مباشرة. تأكد من تثبيت واتساب وصحة رقم المشترك."
+            "تعذر فتح واتساب لمشاركة صورة الإيصال. تأكد من تثبيت واتساب."
         }
     }
 }
