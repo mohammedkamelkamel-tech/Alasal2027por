@@ -46,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +82,7 @@ fun SystemDiagnosticsScreen(
     onNavigateToSyncBackup: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val alasalColors = LocalAlasalColors.current
     var stationPhoneInput by remember(notificationPrefs.stationPhone) { mutableStateOf(notificationPrefs.stationPhone) }
     var stationAddressInput by remember(notificationPrefs.stationAddress) { mutableStateOf(notificationPrefs.stationAddress) }
@@ -352,6 +354,8 @@ fun SystemDiagnosticsScreen(
                                     checked = notificationPrefs.invoiceUnitPriceVisible,
                                     onCheckedChange = { enabled ->
                                         onUpdateNotificationPrefs { it.copy(invoiceUnitPriceVisible = enabled) }
+                                        context.getSharedPreferences("alasal_theme_prefs", android.content.Context.MODE_PRIVATE)
+                                            .edit().putBoolean("invoice_unit_price_visible", enabled).apply()
                                     },
                                     modifier = Modifier.testTag("invoice_unit_price_visible_switch")
                                 )
