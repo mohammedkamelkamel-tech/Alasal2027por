@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
+import android.telephony.SmsManager
 import android.view.View
 import android.print.PrintAttributes
 import android.print.PrintManager
@@ -126,6 +127,32 @@ object InvoiceShareAndPrintService {
         )
     }
 
+    fun buildInvoiceSmsText(invoice: InvoiceEntity): String {
+        fun compact(value: Double): String =
+            if (value % 1.0 == 0.0) value.toLong().toString()
+            else String.format(Locale.US, "%.2f", value)
+        return "محطة العسل⚡\n" +
+            "القراءة حالية${compact(invoice.currentReading)}\n" +
+            "أستهلاك${compact(invoice.consumedKwh)}\n" +
+            "متأخرات${compact(invoice.previousArrearsApplied)}\n" +
+            "الاجمالي${compact(invoice.netPayableAmount)}"
+    }
+
+    fun sendInvoiceSms(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity, defaultCountryCode: String = "967"): String? {
+        val phone = normalizePhoneForWhatsApp(subscriber.phoneNumber, defaultCountryCode)
+        if (!phone.isValid) return phone.warningMessage ?: "رقم هاتف المشترك غير صالح."
+        return runCatching {
+            val manager = if (android.os.Build.VERSION.SDK_INT >= 31) context.getSystemService(SmsManager::class.java) else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            } ?: return "خدمة الرسائل SMS غير متاحة على هذا الجهاز."
+            val body = buildInvoiceSmsText(invoice)
+            val parts = manager.divideMessage(body)
+            if (parts.size <= 1) manager.sendTextMessage(phone.normalizedDigits, null, body, null, null)
+            else manager.sendMultipartTextMessage(phone.normalizedDigits, null, parts, null, null)
+            null
+        }.getOrElse { "تعذر إرسال فاتورة ${invoice.invoiceNumber}: ${it.message ?: "خطأ غير معروف"}" }
+    }
     fun buildWhatsAppChatUri(normalizedDigits: String, text: String): Uri {
         val encodedText = URLEncoder.encode(text, "UTF-8")
         return Uri.parse("https://wa.me/$normalizedDigits?text=$encodedText")
