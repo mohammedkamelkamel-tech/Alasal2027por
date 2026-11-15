@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import android.view.View
 import android.print.PrintAttributes
@@ -145,6 +148,97 @@ object InvoiceShareAndPrintService {
         }
     }
 
+    private fun generateInvoicePngImage(
+        context: Context,
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?
+    ): File {
+        val dir = File(context.cacheDir, "shared_images").apply { mkdirs() }
+        val file = File(dir, "Invoice_${invoice.invoiceNumber}.png")
+        val width = 900
+        val height = 1180
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        val navy = Color.rgb(13, 38, 60)
+        val gold = Color.rgb(212, 175, 55)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = navy
+            textSize = 34f
+            textAlign = Paint.Align.RIGHT
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), 170f, Paint().apply { color = navy })
+        paint.color = Color.WHITE
+        paint.textSize = 46f
+        paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        canvas.drawText("محطة العسل", width - 55f, 72f, paint)
+        paint.textSize = 30f
+        canvas.drawText("فاتورة كهرباء رقم: ${invoice.invoiceNumber}", width - 55f, 125f, paint)
+        canvas.drawRect(0f, 170f, width.toFloat(), 180f, Paint().apply { color = gold })
+        paint.color = navy
+        paint.textSize = 32f
+        paint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        val rows = listOf(
+            "اسم المشترك: ${subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"}",
+            "رقم المشترك: ${subscriber?.subscriberCode ?: "-"}",
+            "رقم العداد: ${subscriber?.meterNumber ?: "-"}",
+            "الفترة: ${invoice.billingPeriod}",
+            "القراءة السابقة: ${invoice.previousReading}",
+            "القراءة الحالية: ${invoice.currentReading}",
+            "الاستهلاك (ك.و.س): ${invoice.consumedKwh}",
+            "سعر الكيلوواط: ${invoice.unitPriceApplied} ريال",
+            "قيمة الاستهلاك: ${invoice.energyAmount} ريال",
+            "المتأخرات المرحلة: ${invoice.previousArrearsApplied} ريال",
+            "الرصيد الدائن المخصوم: ${invoice.creditDeducted} ريال",
+            "صافي الفاتورة: ${invoice.netPayableAmount} ريال",
+            "المدفوع: ${invoice.paidAmount} ريال",
+            "المتبقي: ${invoice.remainingAmount} ريال",
+            "الحالة: ${translateStatus(invoice.status)}",
+            "تاريخ الإصدار: ${SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar")).format(Date(invoice.issuedAt))}"
+        )
+        var y = 250f
+        rows.forEachIndexed { index, row ->
+            if (index % 2 == 0) {
+                canvas.drawRoundRect(35f, y - 42f, width - 35f, y + 16f, 12f, 12f,
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF3F6F9.toInt() })
+            }
+            canvas.drawText(row, width - 60f, y, paint)
+            y += 62f
+        }
+        paint.color = gold
+        paint.strokeWidth = 5f
+        canvas.drawLine(45f, y + 8f, width - 45f, y + 8f, paint)
+        paint.color = navy
+        paint.textSize = 25f
+        paint.textAlign = Paint.Align.CENTER
+        canvas.drawText("شكراً لثقتكم بمحطة العسل", width / 2f, height - 48f, paint)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        return file
+    }
+
+    private fun sendImageToWhatsApp(
+        context: Context,
+        imageFile: File,
+        caption: String
+    ): String? {
+        return runCatching {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", imageFile)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TEXT, caption)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage("com.whatsapp")
+            }
+            context.startActivity(intent)
+            null
+        }.getOrElse {
+            "تعذر فتح واتساب لمشاركة الصورة. تأكد من تثبيت واتساب."
+        }
+    }
+
     /**
      * Launches direct WhatsApp chat to normalized subscriber phone with invoice summary.
      * Returns null on success or an explicit Arabic warning message when phone is missing/invalid.
@@ -157,19 +251,14 @@ object InvoiceShareAndPrintService {
     ): String? {
         val norm = normalizePhoneForWhatsApp(subscriber?.phoneNumber, defaultCountryCode)
         if (!norm.isValid) return norm.warningMessage
-        val text = buildInvoiceShareText(invoice, subscriber)
-        val intent = Intent(
-            Intent.ACTION_VIEW,
-            buildWhatsAppChatUri(norm.normalizedDigits, text)
-        ).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val image = runCatching { generateInvoicePngImage(context, invoice, subscriber) }.getOrElse {
+            return "تعذر تجهيز صورة الفاتورة للمشاركة."
         }
-        return runCatching {
-            context.startActivity(intent)
-            null
-        }.getOrElse {
-            "تعذر فتح محادثة واتساب مباشرة. تأكد من تثبيت واتساب وصحة رقم المشترك."
-        }
+        return sendImageToWhatsApp(
+            context,
+            image,
+            "فاتورة كهرباء رقم ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName.orEmpty()}"
+        )
     }
 
     fun sendStatementViaWhatsApp(
