@@ -231,7 +231,7 @@ object InvoiceShareAndPrintService {
         val rows = listOf(
             "القراءة السابقة / الحالية" to "${invoice.previousReading} ← ${invoice.currentReading}",
             "الاستهلاك (ك.و.س)" to "${invoice.consumedKwh}",
-            *if (isInvoiceUnitPriceVisible(context)) listOf("سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}") else emptyList(),
+            *(if (isInvoiceUnitPriceVisible(context)) listOf("سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}") else emptyList()),
             "قيمة الاستهلاك الحالي" to "${invoice.energyAmount}",
             "المتأخرات المرحلة" to "${invoice.previousArrearsApplied}",
             "الرصيد الدائن المخصوم" to "${invoice.creditDeducted}",
