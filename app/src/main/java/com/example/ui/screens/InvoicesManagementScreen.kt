@@ -100,21 +100,7 @@ fun InvoicesManagementScreen(
     var selectedSubscriberForDetails by remember { mutableStateOf<SubscriberEntity?>(null) }
     var smsSummary by remember { mutableStateOf<String?>(null) }
     var showBulkSmsConfirmation by remember { mutableStateOf(false) }
-    fun dispatchBulkSms() {
-        var sent = 0
-        var failed = 0
-        filteredInvoices.forEach { invoice ->
-            val subscriber = subscribers.firstOrNull { it.id == invoice.subscriberId }
-            if (subscriber == null) failed++ else {
-                val error = InvoiceShareAndPrintService.sendInvoiceSms(context, invoice, subscriber, notificationPrefs.defaultCountryCode)
-                if (error == null) sent++ else failed++
-            }
-        }
-        smsSummary = "تم طلب إرسال $sent فاتورة، وتعذر إرسال $failed فاتورة."
-    }
-    val smsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) dispatchBulkSms() else smsSummary = "لم تمنح التطبيق إذن إرسال الرسائل SMS."
-    }
+
 
     val subscriberMap = remember(subscribers) { subscribers.associateBy { it.id } }
 
@@ -135,6 +121,22 @@ fun InvoicesManagementScreen(
                 matchesStatus && matchesDate && matchesSearch
             }
             .sortedWith(compareByDescending<InvoiceEntity> { it.issuedAt }.thenByDescending { it.id })
+    }
+
+    fun dispatchBulkSms() {
+        var sent = 0
+        var failed = 0
+        filteredInvoices.forEach { invoice ->
+            val subscriber = subscribers.firstOrNull { it.id == invoice.subscriberId }
+            if (subscriber == null) failed++ else {
+                val error = InvoiceShareAndPrintService.sendInvoiceSms(context, invoice, subscriber, notificationPrefs.defaultCountryCode)
+                if (error == null) sent++ else failed++
+            }
+        }
+        smsSummary = "تم طلب إرسال $sent فاتورة، وتعذر إرسال $failed فاتورة."
+    }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) dispatchBulkSms() else smsSummary = "لم تمنح التطبيق إذن إرسال الرسائل SMS."
     }
 
     Column(
