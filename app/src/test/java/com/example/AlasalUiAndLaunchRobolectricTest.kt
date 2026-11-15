@@ -108,6 +108,8 @@ class AlasalUiAndLaunchRobolectricTest {
         composeTestRule.onNodeWithTag("sub_input_name").performTextInput("سعيد العسل")
         composeTestRule.onNodeWithTag("sub_input_code").performTextInput("SUB-UI-1")
         composeTestRule.onNodeWithTag("sub_input_meter").performTextInput("MTR-UI-1")
+        // Set a positive explicit tariff so the issued invoice is payable in this flow.
+        composeTestRule.onNodeWithTag("sub_input_price").performTextReplacement("0.45")
         composeTestRule.onNodeWithTag("sub_save_button").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             composeTestRule.onAllNodesWithTag("subscriber_card_SUB-UI-1").fetchSemanticsNodes().isNotEmpty()
