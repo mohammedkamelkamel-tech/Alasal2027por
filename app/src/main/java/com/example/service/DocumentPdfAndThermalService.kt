@@ -1016,6 +1016,7 @@ object DocumentPdfAndThermalService {
                 type = "image/png"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TEXT, caption)
+                putExtra("jid", norm.normalizedDigits + "@s.whatsapp.net")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 setPackage("com.whatsapp")
             }
