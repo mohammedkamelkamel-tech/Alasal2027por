@@ -32,7 +32,8 @@ data class NotificationAndPrintPrefs(
     val stationPhone: String = "770002027",
     val stationAddress: String = "محطة العسل لتوليد وتوزيع الكهرباء",
     val defaultCountryCode: String = "967",
-    val bulkInvoiceSmsEnabled: Boolean = false
+    val bulkInvoiceSmsEnabled: Boolean = false,
+    val invoiceUnitPriceVisible: Boolean = true
 )
 
 data class BackupAndSessionPrefs(
@@ -62,6 +63,7 @@ class ThemePreferencesRepository(private val context: Context) {
     private val stationAddressKey = stringPreferencesKey("station_address")
     private val defaultCountryCodeKey = stringPreferencesKey("default_country_code")
     private val bulkInvoiceSmsEnabledKey = booleanPreferencesKey("bulk_invoice_sms_enabled")
+    private val invoiceUnitPriceVisibleKey = booleanPreferencesKey("invoice_unit_price_visible")
 
     private val activeUserIdKey = longPreferencesKey("active_session_user_id")
     private val dailyAutoBackupKey = booleanPreferencesKey("daily_auto_backup_enabled")
@@ -92,7 +94,8 @@ class ThemePreferencesRepository(private val context: Context) {
             stationPhone = prefs[stationPhoneKey] ?: "770002027",
             stationAddress = prefs[stationAddressKey] ?: "محطة العسل لتوليد وتوزيع الكهرباء",
             defaultCountryCode = prefs[defaultCountryCodeKey]?.filter { it.isDigit() }?.ifBlank { "967" } ?: "967",
-            bulkInvoiceSmsEnabled = prefs[bulkInvoiceSmsEnabledKey] ?: false
+            bulkInvoiceSmsEnabled = prefs[bulkInvoiceSmsEnabledKey] ?: false,
+            invoiceUnitPriceVisible = prefs[invoiceUnitPriceVisibleKey] ?: true
         )
     }
 
@@ -195,6 +198,7 @@ class ThemePreferencesRepository(private val context: Context) {
             prefs[stationAddressKey] = next.stationAddress
             prefs[defaultCountryCodeKey] = next.defaultCountryCode.filter { it.isDigit() }.ifBlank { "967" }
             prefs[bulkInvoiceSmsEnabledKey] = next.bulkInvoiceSmsEnabled
+            prefs[invoiceUnitPriceVisibleKey] = next.invoiceUnitPriceVisible
         }
     }
 }
