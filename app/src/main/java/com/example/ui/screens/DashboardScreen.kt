@@ -186,6 +186,32 @@ fun DashboardScreen(
                 }
             }
 
+            item(key = "field_collection_primary") {
+                Button(
+                    onClick = onNavigateToFieldCollection,
+                    modifier = Modifier
+                        .widthIn(max = 800.dp)
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .testTag("dashboard_field_collection_button"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = alasalColors.arrearsRed
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = "كشف التحصيل الميداني",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
             item(key = "shortcuts") {
                 Column(
                     modifier = Modifier.widthIn(max = 800.dp).fillMaxWidth(),
@@ -225,15 +251,6 @@ fun DashboardScreen(
                                 accent = MaterialTheme.colorScheme.primary,
                                 testTag = "shortcut_accounts",
                                 onClick = onNavigateToAccounts
-                            )
-                        }
-                        item {
-                            DashboardShortcutButton(
-                                icon = Icons.Filled.LocationOn,
-                                label = "كشف النزول الميداني",
-                                accent = alasalColors.arrearsRed,
-                                testTag = "shortcut_field_collection",
-                                onClick = onNavigateToFieldCollection
                             )
                         }
                         item {
