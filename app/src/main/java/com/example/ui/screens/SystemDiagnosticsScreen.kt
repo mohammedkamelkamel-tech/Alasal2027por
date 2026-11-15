@@ -337,6 +337,28 @@ fun SystemDiagnosticsScreen(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("السماح بإرسال جميع الفواتير عبر SMS", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "يظهر زر الإرسال الجماعي في شاشة الفواتير عند التفعيل",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = notificationPrefs.bulkInvoiceSmsEnabled,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateNotificationPrefs { it.copy(bulkInvoiceSmsEnabled = enabled) }
+                                    },
+                                    modifier = Modifier.testTag("bulk_invoice_sms_enabled_switch")
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Button(
