@@ -248,7 +248,8 @@ object InvoiceShareAndPrintService {
     private fun sendImageToWhatsApp(
         context: Context,
         imageFile: File,
-        caption: String
+        caption: String,
+        recipientDigits: String
     ): String? {
         return runCatching {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", imageFile)
@@ -256,6 +257,7 @@ object InvoiceShareAndPrintService {
                 type = "image/png"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TEXT, caption)
+                putExtra("jid", recipientDigits + "@s.whatsapp.net")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 setPackage("com.whatsapp")
             }
@@ -284,7 +286,8 @@ object InvoiceShareAndPrintService {
         return sendImageToWhatsApp(
             context,
             image,
-            "فاتورة كهرباء رقم ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName.orEmpty()}"
+            "فاتورة كهرباء رقم ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName.orEmpty()}",
+            norm.normalizedDigits
         )
     }
 
