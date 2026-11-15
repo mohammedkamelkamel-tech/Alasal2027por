@@ -365,6 +365,22 @@ fun InvoicesManagementScreen(
         }
     }
 
+    if (showBulkSmsConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showBulkSmsConfirmation = false },
+            title = { Text("تأكيد إرسال الفواتير") },
+            text = { Text("سيتم إرسال ${filteredInvoices.size} فاتورة SMS حسب الفلاتر المحددة. قد تتحول الرسالة إلى أكثر من جزء إذا تجاوزت حد SMS.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBulkSmsConfirmation = false
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) dispatchBulkSms()
+                    else smsPermissionLauncher.launch(Manifest.permission.SEND_SMS)
+                }) { Text("إرسال") }
+            },
+            dismissButton = { TextButton(onClick = { showBulkSmsConfirmation = false }) { Text("إلغاء") } }
+        )
+    }
+
     selectedSubscriberForDetails?.let { subscriber ->
         val subscriberInvoices = invoices.filter { it.subscriberId == subscriber.id }
             .sortedByDescending { it.issuedAt }
