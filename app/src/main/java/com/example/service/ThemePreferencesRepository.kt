@@ -8,10 +8,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.preferencesDataStoreFile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.WeakHashMap
 
 enum class AppThemeMode {
     SYSTEM,
@@ -44,7 +46,20 @@ data class BackupAndSessionPrefs(
     val inactivityLockTimeoutSeconds: Int = 120
 )
 
-private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "alasal_theme_prefs")
+private val themeDataStoreCacheLock = Any()
+private val themeDataStoreByApp = WeakHashMap<Context, DataStore<Preferences>>()
+
+private val Context.themeDataStore: DataStore<Preferences>
+    get() {
+        val appCtx = applicationContext
+        return synchronized(themeDataStoreCacheLock) {
+            themeDataStoreByApp.getOrPut(appCtx) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { appCtx.preferencesDataStoreFile("alasal_theme_prefs") }
+                )
+            }
+        }
+    }
 
 class ThemePreferencesRepository(private val context: Context) {
 

@@ -52,6 +52,11 @@ class Phase6AutomationStatementsSecurityTest {
 
     @Before
     fun setup() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
         context = ApplicationProvider.getApplicationContext()
         database = Room.inMemoryDatabaseBuilder(context, AlasalDatabase::class.java)
             .allowMainThreadQueries()
@@ -206,22 +211,25 @@ class Phase6AutomationStatementsSecurityTest {
         val shadowApp = Shadows.shadowOf(context as Application)
         while (shadowApp.nextStartedActivity != null) { /* drain */ }
 
-        // 1. Invoice WhatsApp dispatch
+        // 1. Invoice WhatsApp dispatch (PNG invoice image via ACTION_SEND to WhatsApp jid)
         val invWarn = InvoiceShareAndPrintService.sendViaWhatsApp(context, invoice, sub, "967")
         assertNull(invWarn)
         val invIntent = shadowApp.nextStartedActivity
         assertNotNull(invIntent)
-        assertEquals(Intent.ACTION_VIEW, invIntent.action)
-        assertTrue(invIntent.dataString!!.startsWith("https://wa.me/967771234567?text="))
+        assertEquals(Intent.ACTION_SEND, invIntent.action)
+        assertEquals("image/png", invIntent.type)
+        assertEquals("967771234567@s.whatsapp.net", invIntent.getStringExtra("jid"))
 
-        // 2. Receipt WhatsApp dispatch
+        // 2. Receipt WhatsApp dispatch (PNG receipt image via ACTION_SEND to WhatsApp jid)
         val colId = billingRepository.recordInvoicePayment(invId, 40.0, "CASH", actorUserId = admin.id).getOrThrow()
         val receipt: ReceiptEntity = billingRepository.getReceiptByCollectionId(colId)!!
         val rcpWarn = DocumentPdfAndThermalService.shareReceiptViaWhatsApp(context, receipt, sub.phoneNumber, "967")
         assertNull(rcpWarn)
         val rcpIntent = shadowApp.nextStartedActivity
         assertNotNull(rcpIntent)
-        assertTrue(rcpIntent.dataString!!.startsWith("https://wa.me/967771234567?text="))
+        assertEquals(Intent.ACTION_SEND, rcpIntent.action)
+        assertEquals("image/png", rcpIntent.type)
+        assertEquals("967771234567@s.whatsapp.net", rcpIntent.getStringExtra("jid"))
 
         // 3. Subscriber statement WhatsApp dispatch
         val statement = StationReportGenerator.buildSubscriberStatement(

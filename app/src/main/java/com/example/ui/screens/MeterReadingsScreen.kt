@@ -21,12 +21,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ElectricMeter
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -57,6 +61,8 @@ import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.MeterReadingEntity
 import com.example.data.local.entity.SubscriberEntity
 import com.example.data.repository.MeterReadingInput
+import com.example.data.repository.MeterReadingUpdateInput
+import com.example.domain.finance.ConsumptionSummaryCalculator
 import com.example.domain.finance.FinancialCalculator
 import com.example.service.InvoiceShareAndPrintService
 import com.example.service.NotificationAndPrintPrefs
@@ -76,6 +82,8 @@ fun MeterReadingsScreen(
     feedback: FeedbackMessage?,
     onDismissFeedback: () -> Unit,
     onSaveReading: (MeterReadingInput, Boolean, String, () -> Unit) -> Unit,
+    onUpdateReading: (MeterReadingUpdateInput, () -> Unit) -> Unit = { _, done -> done() },
+    onDeleteReading: (Long, () -> Unit) -> Unit = { _, done -> done() },
     onIssueInvoiceForReading: (Long) -> Unit,
     notificationPrefs: NotificationAndPrintPrefs = NotificationAndPrintPrefs(),
     lastIssuedInvoice: InvoiceEntity? = null,
@@ -101,7 +109,7 @@ fun MeterReadingsScreen(
     val subscriberLatestReading = remember(readings, selectedSubscriberId) {
         readings.filter { it.subscriberId == selectedSubscriberId }.maxByOrNull { it.readingDate }
     }
-    val previousReadingValue = subscriberLatestReading?.currentReading ?: 0.0
+    val previousReadingValue = subscriberLatestReading?.currentReading ?: selectedSubscriber?.initialMeterReading ?: 0.0
 
     var currentReadingText by remember { mutableStateOf("") }
     var readingDaysOffset by remember { mutableIntStateOf(0) }
@@ -109,11 +117,18 @@ fun MeterReadingsScreen(
     var photoUriString by remember { mutableStateOf<String?>(null) }
     var allowLowOverride by remember { mutableStateOf(false) }
     var overrideReason by remember { mutableStateOf("") }
+    var editingReading by remember { mutableStateOf<MeterReadingEntity?>(null) }
+    var deletingReading by remember { mutableStateOf<MeterReadingEntity?>(null) }
 
     val baseReadingTime = remember { System.currentTimeMillis() }
     val readingDate = baseReadingTime - readingDaysOffset * 86_400_000L
     val previousReadingDate = subscriberLatestReading?.readingDate ?: selectedSubscriber?.subscriptionDate ?: readingDate
-    val billingPeriod = "${dateFormat.format(Date(previousReadingDate))} إلى ${dateFormat.format(Date(readingDate))}"
+    val periodKeyFormatter = remember { SimpleDateFormat("yyyy-MM", Locale.US) }
+    val billingPeriod = periodKeyFormatter.format(Date(readingDate))
+    val autoDetectedHalf = remember(readingDate) {
+        ConsumptionSummaryCalculator.classifyHalfFromDate(readingDate)
+    }
+    var selectedReadingHalf by remember(autoDetectedHalf) { mutableIntStateOf(autoDetectedHalf) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -406,11 +421,46 @@ fun MeterReadingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "تاريخ القراءة: ${dateFormat.format(Date(readingDate))}",
+                                    text = "تاريخ القراءة: ${dateFormat.format(Date(readingDate))} ($billingPeriod)",
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                TextButton(onClick = { readingDaysOffset += 1 }) {
-                                    Text("تغيير (-يوم)")
+                                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    TextButton(onClick = { readingDaysOffset += 1 }) {
+                                        Text("-يوم")
+                                    }
+                                    if (readingDaysOffset != 0) {
+                                        TextButton(onClick = { readingDaysOffset = 0 }) {
+                                            Text("اليوم")
+                                        }
+                                    }
+                                    TextButton(onClick = { readingDaysOffset -= 1 }) {
+                                        Text("+يوم")
+                                    }
+                                }
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "دورة القراءة نصف الشهرية (تلقائي حسب التاريخ ويمكن التعديل):",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = selectedReadingHalf == ConsumptionSummaryCalculator.READING_HALF_FIRST,
+                                        onClick = { selectedReadingHalf = ConsumptionSummaryCalculator.READING_HALF_FIRST },
+                                        label = { Text("النصف الأول (1-15)") },
+                                        modifier = Modifier.weight(1f).testTag("reading_half_chip_1")
+                                    )
+                                    FilterChip(
+                                        selected = selectedReadingHalf == ConsumptionSummaryCalculator.READING_HALF_SECOND,
+                                        onClick = { selectedReadingHalf = ConsumptionSummaryCalculator.READING_HALF_SECOND },
+                                        label = { Text("النصف الثاني (16-آخر الشهر)") },
+                                        modifier = Modifier.weight(1f).testTag("reading_half_chip_2")
+                                    )
                                 }
                             }
 
@@ -466,7 +516,8 @@ fun MeterReadingsScreen(
                                                 photoUri = photoUriString,
                                                 allowLowReadingOverride = allowLowOverride,
                                                 overrideReason = overrideReason,
-                                                notes = notes
+                                                notes = notes,
+                                                readingHalf = selectedReadingHalf
                                             ),
                                             false,
                                             "",
@@ -493,7 +544,8 @@ fun MeterReadingsScreen(
                                                 photoUri = photoUriString,
                                                 allowLowReadingOverride = allowLowOverride,
                                                 overrideReason = overrideReason,
-                                                notes = notes
+                                                notes = notes,
+                                                readingHalf = selectedReadingHalf
                                             ),
                                             true,
                                             notes,
@@ -547,9 +599,10 @@ fun MeterReadingsScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = dateFormat.format(Date(reading.readingDate)),
+                                text = "${ConsumptionSummaryCalculator.halfShortTitle(reading.readingHalf)} | ${dateFormat.format(Date(reading.readingDate))}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = alasalColors.gold,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                         Text(
@@ -562,6 +615,31 @@ fun MeterReadingsScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = alasalColors.creditGreen
                             )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { editingReading = reading },
+                                modifier = Modifier.weight(1f).height(48.dp).testTag("reading_edit_button_${reading.id}")
+                            ) {
+                                Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(4.dp))
+                                Text("تعديل", maxLines = 1)
+                            }
+                            if (!hasInvoice) {
+                                OutlinedButton(
+                                    onClick = { deletingReading = reading },
+                                    modifier = Modifier.weight(1f).height(48.dp).testTag("reading_delete_button_${reading.id}"),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = alasalColors.arrearsRed)
+                                ) {
+                                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.size(4.dp))
+                                    Text("حذف", maxLines = 1)
+                                }
+                            }
                         }
                         if (!hasInvoice) {
                             OutlinedButton(
@@ -582,5 +660,117 @@ fun MeterReadingsScreen(
                 }
             }
         }
+    }
+
+    editingReading?.let { target ->
+        var editPeriod by remember(target.id) { mutableStateOf(target.billingPeriod) }
+        var editHalf by remember(target.id) { mutableIntStateOf(target.readingHalf) }
+        var editPreviousText by remember(target.id) { mutableStateOf(target.previousReading.toString()) }
+        var editCurrentText by remember(target.id) { mutableStateOf(target.currentReading.toString()) }
+        var editNotes by remember(target.id) { mutableStateOf(target.notes) }
+
+        AlertDialog(
+            onDismissRequest = { editingReading = null },
+            title = { Text("تعديل قراءة العداد") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editPeriod,
+                        onValueChange = { editPeriod = it },
+                        label = { Text("الشهر (YYYY-MM)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_reading_period_input")
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        FilterChip(
+                            selected = editHalf == ConsumptionSummaryCalculator.READING_HALF_FIRST,
+                            onClick = { editHalf = ConsumptionSummaryCalculator.READING_HALF_FIRST },
+                            label = { Text("النصف الأول") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = editHalf == ConsumptionSummaryCalculator.READING_HALF_SECOND,
+                            onClick = { editHalf = ConsumptionSummaryCalculator.READING_HALF_SECOND },
+                            label = { Text("النصف الثاني") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = editPreviousText,
+                        onValueChange = { editPreviousText = it },
+                        label = { Text("القراءة السابقة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_reading_previous_input")
+                    )
+                    OutlinedTextField(
+                        value = editCurrentText,
+                        onValueChange = { editCurrentText = it },
+                        label = { Text("القراءة الحالية") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_reading_current_input")
+                    )
+                    OutlinedTextField(
+                        value = editNotes,
+                        onValueChange = { editNotes = it },
+                        label = { Text("ملاحظات") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val prevVal = editPreviousText.toDoubleOrNull() ?: return@Button
+                        val currVal = editCurrentText.toDoubleOrNull() ?: return@Button
+                        onUpdateReading(
+                            MeterReadingUpdateInput(
+                                readingId = target.id,
+                                billingPeriod = editPeriod,
+                                readingHalf = editHalf,
+                                previousReading = prevVal,
+                                currentReading = currVal,
+                                readingDate = target.readingDate,
+                                notes = editNotes
+                            )
+                        ) { editingReading = null }
+                    },
+                    modifier = Modifier.testTag("edit_reading_confirm_button")
+                ) {
+                    Text("حفظ التعديل")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingReading = null }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+
+    deletingReading?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deletingReading = null },
+            title = { Text("تأكيد حذف القراءة") },
+            text = {
+                Text("هل تريد حذف قراءة الفترة ${target.billingPeriod} (${ConsumptionSummaryCalculator.halfShortTitle(target.readingHalf)}) باستهلاك ${target.consumedKwh} ك.و.س؟ سيتم تحديث إجمالي الاستهلاك فوراً.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteReading(target.id) { deletingReading = null }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = alasalColors.arrearsRed),
+                    modifier = Modifier.testTag("delete_reading_confirm_button")
+                ) {
+                    Text("تأكيد الحذف")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingReading = null }) {
+                    Text("إلغاء")
+                }
+            }
+        )
     }
 }

@@ -51,6 +51,11 @@ class Phase3CollectionsReportsAndPrintTest {
 
     @Before
     fun setup() {
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
         context = ApplicationProvider.getApplicationContext()
         database = Room.inMemoryDatabaseBuilder(context, AlasalDatabase::class.java)
             .allowMainThreadQueries()

@@ -300,6 +300,7 @@ class AlasalDatabaseAndRelationsTest {
             MeterReadingEntity(
                 subscriberId = subscriberId,
                 billingPeriod = "2027-02",
+                readingHalf = 1,
                 previousReading = 0.0,
                 currentReading = 50.0,
                 consumedKwh = 50.0
@@ -309,6 +310,7 @@ class AlasalDatabaseAndRelationsTest {
             MeterReadingEntity(
                 subscriberId = subscriberId,
                 billingPeriod = "2027-02",
+                readingHalf = 2,
                 previousReading = 50.0,
                 currentReading = 90.0,
                 consumedKwh = 40.0

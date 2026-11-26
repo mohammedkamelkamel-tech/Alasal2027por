@@ -23,7 +23,8 @@ import androidx.room.PrimaryKey
         )
     ],
     indices = [
-        Index(value = ["subscriber_id", "billing_period"]),
+        Index(value = ["subscriber_id", "billing_period", "reading_half"], unique = true),
+        Index(value = ["billing_period", "reading_half"]),
         Index(value = ["recorded_by_user_id"]),
         Index(value = ["reading_date"])
     ]
@@ -35,6 +36,8 @@ data class MeterReadingEntity(
     val subscriberId: Long,
     @ColumnInfo(name = "billing_period")
     val billingPeriod: String,
+    @ColumnInfo(name = "reading_half")
+    val readingHalf: Int = 1,
     @ColumnInfo(name = "previous_reading")
     val previousReading: Double,
     @ColumnInfo(name = "current_reading")

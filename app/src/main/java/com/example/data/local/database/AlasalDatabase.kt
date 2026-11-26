@@ -186,34 +186,130 @@ abstract class AlasalDatabase : RoomDatabase() {
             }
         }
 
-        /** Version 6 permits multiple readings per subscriber in one month and stores an initial meter reading. */
+        /**
+         * Non-destructive migration from v5 to v6:
+         * 1. Adds initial_meter_reading to subscribers (if not already present).
+         * 2. Rebuilds meter_readings with reading_half (1 = First Half days 1..15, 2 = Second Half days 16..end)
+         *    and composite unique index (subscriber_id, billing_period, reading_half).
+         */
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("DROP INDEX IF EXISTS index_meter_readings_subscriber_id_billing_period")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_meter_readings_subscriber_id_billing_period ON meter_readings(subscriber_id, billing_period)")
-                db.execSQL("ALTER TABLE subscribers ADD COLUMN initial_meter_reading REAL NOT NULL DEFAULT 0.0")
+                var hasInitialReadingCol = false
+                db.query("PRAGMA table_info(subscribers)").use { cursor ->
+                    val nameIdx = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) {
+                        if (nameIdx >= 0 && cursor.getString(nameIdx) == "initial_meter_reading") {
+                            hasInitialReadingCol = true
+                            break
+                        }
+                    }
+                }
+                if (!hasInitialReadingCol) {
+                    db.execSQL("ALTER TABLE subscribers ADD COLUMN initial_meter_reading REAL NOT NULL DEFAULT 0.0")
+                }
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS meter_readings_v6 (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE RESTRICT,
+                        billing_period TEXT NOT NULL,
+                        reading_half INTEGER NOT NULL DEFAULT 1,
+                        previous_reading REAL NOT NULL,
+                        current_reading REAL NOT NULL,
+                        consumed_kwh REAL NOT NULL,
+                        recorded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        reading_date INTEGER NOT NULL,
+                        photo_uri TEXT,
+                        is_low_reading_override INTEGER NOT NULL DEFAULT 0,
+                        override_reason TEXT NOT NULL DEFAULT '',
+                        notes TEXT NOT NULL DEFAULT ''
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO meter_readings_v6 (
+                        id, subscriber_id, billing_period, reading_half,
+                        previous_reading, current_reading, consumed_kwh,
+                        recorded_by_user_id, reading_date, photo_uri,
+                        is_low_reading_override, override_reason, notes
+                    )
+                    SELECT
+                        id,
+                        subscriber_id,
+                        billing_period,
+                        CASE
+                            WHEN CAST(strftime('%d', reading_date / 1000, 'unixepoch', 'localtime') AS INTEGER) >= 16 THEN 2
+                            ELSE 1
+                        END,
+                        previous_reading,
+                        current_reading,
+                        consumed_kwh,
+                        recorded_by_user_id,
+                        reading_date,
+                        photo_uri,
+                        is_low_reading_override,
+                        override_reason,
+                        notes
+                    FROM meter_readings
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE meter_readings")
+                db.execSQL("ALTER TABLE meter_readings_v6 RENAME TO meter_readings")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_meter_readings_subscriber_id_billing_period_reading_half ON meter_readings(subscriber_id, billing_period, reading_half)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_meter_readings_billing_period_reading_half ON meter_readings(billing_period, reading_half)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_meter_readings_recorded_by_user_id ON meter_readings(recorded_by_user_id)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_meter_readings_reading_date ON meter_readings(reading_date)"
+                )
             }
         }
 
         @Volatile
         private var INSTANCE: AlasalDatabase? = null
 
+        @Volatile
+        private var INSTANCE_APP_CONTEXT: Context? = null
+
         fun getInstance(context: Context): AlasalDatabase {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AlasalDatabase::class.java,
-                    DATABASE_NAME
-                )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
-                    .addCallback(object : Callback() {
-                        override fun onOpen(db: SupportSQLiteDatabase) {
-                            super.onOpen(db)
-                            db.execSQL("PRAGMA foreign_keys=ON;")
+            val appCtx = context.applicationContext
+            val existing = INSTANCE
+            if (existing != null && INSTANCE_APP_CONTEXT === appCtx) {
+                return existing
+            }
+            return synchronized(this) {
+                val current = INSTANCE
+                if (current != null && INSTANCE_APP_CONTEXT === appCtx) {
+                    current
+                } else {
+                    if (current != null) {
+                        runCatching { current.close() }
+                    }
+                    Room.databaseBuilder(
+                        appCtx,
+                        AlasalDatabase::class.java,
+                        DATABASE_NAME
+                    )
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                        .addCallback(object : Callback() {
+                            override fun onOpen(db: SupportSQLiteDatabase) {
+                                super.onOpen(db)
+                                db.execSQL("PRAGMA foreign_keys=ON;")
+                            }
+                        })
+                        .build()
+                        .also {
+                            INSTANCE = it
+                            INSTANCE_APP_CONTEXT = appCtx
                         }
-                    })
-                    .build()
-                    .also { INSTANCE = it }
+                }
             }
         }
 
@@ -236,6 +332,7 @@ abstract class AlasalDatabase : RoomDatabase() {
                     current.close()
                 }
                 INSTANCE = null
+                INSTANCE_APP_CONTEXT = null
             }
         }
     }

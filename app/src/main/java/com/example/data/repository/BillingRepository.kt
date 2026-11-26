@@ -12,6 +12,7 @@ import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.MeterReadingEntity
 import com.example.data.local.entity.ReceiptEntity
 import com.example.domain.auth.StationPermission
+import com.example.domain.finance.ConsumptionSummaryCalculator
 import com.example.domain.finance.FinancialCalculator
 import kotlinx.coroutines.flow.Flow
 import java.util.Locale
@@ -22,6 +23,19 @@ data class MeterReadingInput(
     val currentReading: Double,
     val readingDate: Long,
     val photoUri: String? = null,
+    val allowLowReadingOverride: Boolean = false,
+    val overrideReason: String = "",
+    val notes: String = "",
+    val readingHalf: Int? = null
+)
+
+data class MeterReadingUpdateInput(
+    val readingId: Long,
+    val billingPeriod: String,
+    val readingHalf: Int,
+    val previousReading: Double,
+    val currentReading: Double,
+    val readingDate: Long,
     val allowLowReadingOverride: Boolean = false,
     val overrideReason: String = "",
     val notes: String = ""
@@ -88,11 +102,22 @@ class BillingRepository(
     ): Result<Long> = runCatching {
         val period = input.billingPeriod.trim()
         require(period.isNotEmpty()) { "فترة القراءة مطلوبة" }
+        val resolvedHalf = input.readingHalf?.let { ConsumptionSummaryCalculator.normalizeHalf(it) }
+            ?: ConsumptionSummaryCalculator.classifyHalfFromDate(input.readingDate)
 
         database.withTransaction {
             val actor = coreRepository.resolveActorUser(actorUserId)
             require(actor.isActive) { "تم رفض العملية: حساب (${actor.fullName}) موقوف" }
             val subscriber = subscriberDao.getById(input.subscriberId) ?: error("المشترك غير موجود")
+            val existingSameHalf = billingDao.getReadingBySubscriberPeriodAndHalf(
+                subscriberId = subscriber.id,
+                billingPeriod = period,
+                readingHalf = resolvedHalf
+            )
+            require(existingSameHalf == null) {
+                "تم تسجيل قراءة مسبقاً للمشترك (${subscriber.fullName}) في ${ConsumptionSummaryCalculator.halfShortTitle(resolvedHalf)} من الفترة $period"
+            }
+
             val lastReading = billingDao.getLatestReadingForSubscriber(input.subscriberId)
             val previousReading = lastReading?.currentReading ?: subscriber.initialMeterReading
 
@@ -116,6 +141,7 @@ class BillingRepository(
                 MeterReadingEntity(
                     subscriberId = subscriber.id,
                     billingPeriod = period,
+                    readingHalf = resolvedHalf,
                     previousReading = previousReading,
                     currentReading = FinancialCalculator.roundCurrency(input.currentReading),
                     consumedKwh = consumedKwh,
@@ -138,10 +164,156 @@ class BillingRepository(
                     entityId = readingId,
                     amountBefore = previousReading,
                     amountAfter = input.currentReading,
-                    detailsAr = "تسجيل قراءة عداد (${subscriber.fullName}): السابقة $previousReading، الحالية ${input.currentReading}، الاستهلاك $consumedKwh ك.و.س"
+                    detailsAr = "تسجيل قراءة عداد (${subscriber.fullName}) — ${ConsumptionSummaryCalculator.halfShortTitle(resolvedHalf)} ($period): السابقة $previousReading، الحالية ${input.currentReading}، الاستهلاك $consumedKwh ك.و.س"
                 )
             )
             readingId
+        }
+    }
+
+    suspend fun updateMeterReading(
+        input: MeterReadingUpdateInput,
+        actorUserId: Long? = null
+    ): Result<MeterReadingEntity> = runCatching {
+        val period = input.billingPeriod.trim()
+        require(period.isNotEmpty()) { "فترة القراءة مطلوبة" }
+        require(input.previousReading >= 0.0 && input.currentReading >= 0.0) { "قيم القراءة يجب أن تكون موجبة" }
+        val resolvedHalf = ConsumptionSummaryCalculator.normalizeHalf(input.readingHalf)
+
+        database.withTransaction {
+            val actor = coreRepository.resolveActorUser(actorUserId)
+            require(actor.isActive) { "تم رفض العملية: حساب (${actor.fullName}) موقوف" }
+
+            val existing = billingDao.getReadingById(input.readingId) ?: error("قراءة العداد غير موجودة")
+            val subscriber = subscriberDao.getById(existing.subscriberId) ?: error("المشترك غير موجود")
+
+            val conflict = billingDao.getReadingBySubscriberPeriodAndHalf(
+                subscriberId = existing.subscriberId,
+                billingPeriod = period,
+                readingHalf = resolvedHalf
+            )
+            require(conflict == null || conflict.id == existing.id) {
+                "توجد قراءة أخرى لنفس المشترك في ${ConsumptionSummaryCalculator.halfShortTitle(resolvedHalf)} من الفترة $period"
+            }
+
+            val linkedInvoice = billingDao.getInvoiceByReadingId(existing.id)
+            if (linkedInvoice != null) {
+                val invoiceCollections = collectionDao.getCollectionsForInvoice(linkedInvoice.id)
+                require(invoiceCollections.isEmpty() && linkedInvoice.paidAmount == 0.0) {
+                    "لا يمكن تعديل قراءة مرتبطة بفاتورة عليها تحصيلات (${linkedInvoice.invoiceNumber})"
+                }
+                require(linkedInvoice.carriedOverToInvoiceId == null) {
+                    "لا يمكن تعديل قراءة مرتبطة بفاتورة مرحّلة (${linkedInvoice.invoiceNumber})"
+                }
+            }
+
+            if (input.currentReading < input.previousReading) {
+                require(input.allowLowReadingOverride) {
+                    "القراءة الحالية (${input.currentReading}) أقل من السابقة (${input.previousReading}). يلزم صلاحية وتأكيد المدير."
+                }
+                coreRepository.verifyPermission(actorUserId, StationPermission.OVERRIDE_LOW_READING.key)
+                require(input.overrideReason.trim().isNotEmpty()) {
+                    "يرجى كتابة سبب اعتماد القراءة الأقل من السابقة"
+                }
+            }
+
+            val roundedPrev = FinancialCalculator.roundCurrency(input.previousReading)
+            val roundedCurr = FinancialCalculator.roundCurrency(input.currentReading)
+            val consumedKwh = FinancialCalculator.calculateConsumption(
+                previousReading = roundedPrev,
+                currentReading = roundedCurr,
+                allowLowReadingOverride = input.allowLowReadingOverride
+            )
+
+            val updated = existing.copy(
+                billingPeriod = period,
+                readingHalf = resolvedHalf,
+                previousReading = roundedPrev,
+                currentReading = roundedCurr,
+                consumedKwh = consumedKwh,
+                readingDate = input.readingDate,
+                isLowReadingOverride = roundedCurr < roundedPrev,
+                overrideReason = input.overrideReason.trim(),
+                notes = input.notes.trim()
+            )
+            billingDao.updateMeterReading(updated)
+
+            if (linkedInvoice != null) {
+                val recalc = FinancialCalculator.calculateInvoice(
+                    consumedKwh = consumedKwh,
+                    pricePerKwh = linkedInvoice.unitPriceApplied,
+                    fixedFee = linkedInvoice.fixedFeeApplied,
+                    previousArrears = linkedInvoice.previousArrearsApplied,
+                    availableCredit = linkedInvoice.creditDeducted
+                )
+                val updatedInvoice = linkedInvoice.copy(
+                    billingPeriod = period,
+                    previousReading = roundedPrev,
+                    currentReading = roundedCurr,
+                    consumedKwh = recalc.consumedKwh,
+                    energyAmount = recalc.energyAmount,
+                    netPayableAmount = recalc.netPayableAmount,
+                    remainingAmount = recalc.netPayableAmount,
+                    status = if (recalc.netPayableAmount == 0.0) "PAID" else "UNPAID"
+                )
+                billingDao.updateInvoice(updatedInvoice)
+                val updatedArrears = billingDao.sumActiveUnpaidInvoiceBalances(subscriber.id)
+                subscriberDao.updateFinancialBalances(
+                    subscriberId = subscriber.id,
+                    arrearsAmount = FinancialCalculator.roundCurrency(updatedArrears),
+                    creditBalance = subscriber.currentCreditBalance,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+
+            systemDao.insertAuditLog(
+                FinancialAuditLogEntity(
+                    subscriberId = subscriber.id,
+                    actorUserId = actor.id,
+                    actorNameSnapshot = actor.fullName,
+                    operationType = "METER_READING_UPDATED",
+                    entityName = "meter_readings",
+                    entityId = updated.id,
+                    amountBefore = existing.consumedKwh,
+                    amountAfter = updated.consumedKwh,
+                    detailsAr = "تعديل قراءة (${subscriber.fullName}) — ${ConsumptionSummaryCalculator.halfShortTitle(resolvedHalf)} ($period): الاستهلاك من ${existing.consumedKwh} إلى ${updated.consumedKwh} ك.و.س"
+                )
+            )
+            updated
+        }
+    }
+
+    suspend fun deleteMeterReadingSafely(
+        readingId: Long,
+        actorUserId: Long? = null
+    ): Result<String> = runCatching {
+        database.withTransaction {
+            val actor = coreRepository.resolveActorUser(actorUserId)
+            require(actor.isActive) { "تم رفض العملية: حساب (${actor.fullName}) موقوف" }
+
+            val existing = billingDao.getReadingById(readingId) ?: error("قراءة العداد غير موجودة")
+            val linkedInvoice = billingDao.getInvoiceByReadingId(readingId)
+            require(linkedInvoice == null) {
+                "لا يمكن حذف القراءة لارتباطها بالفاتورة (${linkedInvoice?.invoiceNumber}). احذف الفاتورة غير المحصلة أولاً."
+            }
+
+            val subscriber = subscriberDao.getById(existing.subscriberId)
+            billingDao.deleteMeterReadingById(readingId)
+
+            systemDao.insertAuditLog(
+                FinancialAuditLogEntity(
+                    subscriberId = existing.subscriberId,
+                    actorUserId = actor.id,
+                    actorNameSnapshot = actor.fullName,
+                    operationType = "METER_READING_DELETED",
+                    entityName = "meter_readings",
+                    entityId = existing.id,
+                    amountBefore = existing.consumedKwh,
+                    amountAfter = 0.0,
+                    detailsAr = "حذف قراءة (${subscriber?.fullName ?: "#${existing.subscriberId}"}) — ${ConsumptionSummaryCalculator.halfShortTitle(existing.readingHalf)} (${existing.billingPeriod}) باستهلاك ${existing.consumedKwh} ك.و.س"
+                )
+            )
+            "تم حذف قراءة العداد وتحديث إجمالي الاستهلاك بنجاح"
         }
     }
 
