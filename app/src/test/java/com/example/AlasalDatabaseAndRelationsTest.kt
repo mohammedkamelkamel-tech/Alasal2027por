@@ -510,4 +510,62 @@ class AlasalDatabaseAndRelationsTest {
         helper.close()
         context.deleteDatabase(dbName)
     }
+
+    @Test
+    fun `MIGRATION_5_6 upgrades v5 meter_readings preserving rows, classifying halves by day, and allowing both halves per month`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dbName = "migration_v5_v6_test.db"
+        context.deleteDatabase(dbName)
+
+        val calDay5 = java.util.Calendar.getInstance().apply {
+            set(2027, java.util.Calendar.JANUARY, 5, 10, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val calDay22 = java.util.Calendar.getInstance().apply {
+            set(2027, java.util.Calendar.JANUARY, 22, 10, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(5) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE subscribers (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, subscriber_code TEXT NOT NULL, full_name TEXT NOT NULL)")
+                        db.execSQL("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, username TEXT NOT NULL)")
+                        db.execSQL("CREATE TABLE meter_readings (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, subscriber_id INTEGER NOT NULL, billing_period TEXT NOT NULL, previous_reading REAL NOT NULL, current_reading REAL NOT NULL, consumed_kwh REAL NOT NULL, recorded_by_user_id INTEGER, reading_date INTEGER NOT NULL, photo_uri TEXT, is_low_reading_override INTEGER NOT NULL DEFAULT 0, override_reason TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')")
+                        db.execSQL("INSERT INTO subscribers VALUES (1, 'SUB-1', 'عادل'), (2, 'SUB-2', 'حسين')")
+                        db.execSQL("INSERT INTO meter_readings VALUES (1, 1, '2027-01', 100.0, 150.0, 50.0, NULL, $calDay5, NULL, 0, '', 'قراءة أولى')")
+                        db.execSQL("INSERT INTO meter_readings VALUES (2, 2, '2027-01', 200.0, 260.0, 60.0, NULL, $calDay22, NULL, 0, '', 'قراءة ثانية')")
+                    }
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build()
+        )
+
+        val db = helper.writableDatabase
+        AlasalDatabase.MIGRATION_5_6.migrate(db)
+
+        db.query("SELECT id, reading_half, consumed_kwh FROM meter_readings ORDER BY id ASC").use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(1L, c.getLong(0))
+            assertEquals(1, c.getInt(1))
+            assertEquals(50.0, c.getDouble(2), 0.001)
+
+            assertTrue(c.moveToNext())
+            assertEquals(2L, c.getLong(0))
+            assertEquals(2, c.getInt(1))
+            assertEquals(60.0, c.getDouble(2), 0.001)
+        }
+
+        // Same subscriber (id=1) can now also insert a Second Half reading in the same month '2027-01'
+        db.execSQL("INSERT INTO meter_readings (subscriber_id, billing_period, reading_half, previous_reading, current_reading, consumed_kwh, recorded_by_user_id, reading_date, photo_uri, is_low_reading_override, override_reason, notes) VALUES (1, '2027-01', 2, 150.0, 180.0, 30.0, NULL, $calDay22, NULL, 0, '', 'نصف ثاني')")
+        db.query("SELECT COUNT(*) FROM meter_readings WHERE subscriber_id = 1 AND billing_period = '2027-01'").use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(2, c.getInt(0))
+        }
+
+        helper.close()
+        context.deleteDatabase(dbName)
+    }
 }

@@ -36,4 +36,6 @@
     <string name="action_manage_tariffs">إدارة الأسعار</string>
     <string name="action_save_reading">حفظ القراءة</string>
     <string name="action_issue_invoice">إصدار فاتورة</string>
+    <string name="title_total_consumption">إجمالي الاستهلاك</string>
+    <string name="subtitle_total_consumption">الاستهلاك الشهري ونصف الشهري (كيلوواط)</string>
 </resources>

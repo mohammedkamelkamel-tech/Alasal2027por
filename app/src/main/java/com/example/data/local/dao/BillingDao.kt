@@ -107,11 +107,24 @@ interface BillingDao {
     @Update
     suspend fun updateMeterReading(reading: MeterReadingEntity)
 
+    @Query("DELETE FROM meter_readings WHERE id = :readingId")
+    suspend fun deleteMeterReadingById(readingId: Long)
+
     @Query("SELECT * FROM meter_readings ORDER BY reading_date ASC, id ASC")
     suspend fun getAllMeterReadingsOnce(): List<MeterReadingEntity>
 
+    @Query("SELECT * FROM meter_readings WHERE subscriber_id = :subscriberId ORDER BY reading_date DESC, id DESC")
+    suspend fun getReadingsForSubscriberOnce(subscriberId: Long): List<MeterReadingEntity>
+
     @Query("SELECT * FROM meter_readings WHERE subscriber_id = :subscriberId AND billing_period = :billingPeriod LIMIT 1")
     suspend fun getReadingBySubscriberAndPeriod(subscriberId: Long, billingPeriod: String): MeterReadingEntity?
+
+    @Query("SELECT * FROM meter_readings WHERE subscriber_id = :subscriberId AND billing_period = :billingPeriod AND reading_half = :readingHalf LIMIT 1")
+    suspend fun getReadingBySubscriberPeriodAndHalf(
+        subscriberId: Long,
+        billingPeriod: String,
+        readingHalf: Int
+    ): MeterReadingEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertInvoice(invoice: InvoiceEntity): Long

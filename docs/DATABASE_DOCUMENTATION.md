@@ -1,7 +1,7 @@
 # توثيق قاعدة البيانات — محطة العسل 2027 (Alasal2027)
 
 - **اسم قاعدة البيانات:** `alasal_2027.db`
-- **الإصدار الحالي للمخطط:** `version = 5`
+- **الإصدار الحالي للمخطط:** `version = 6`
 - **تفعيل القيود المرجعية:** `PRAGMA foreign_keys = ON` عند فتح الاتصال
 - **عدد الجداول:** 14 جدولاً مترابطاً بالكامل
 
@@ -20,8 +20,8 @@
    - يوثّق كل تعديل سعر (مباشر من ملف المشترك، فردي، جماعي، شامل، أو تعديل فاتورة): `tariff_id`, `subscriber_id`, `subscriber_name_snapshot`, `old_price_per_kwh`, `new_price_per_kwh`, `effective_from`, `changed_by_user_id`, `actor_name_snapshot`, `reason`, `changed_at`.
 
 4. **`meter_readings` (قراءات العدادات):**
-   - `id`, `subscriber_id` (FK -> `subscribers`), `billing_period`, `previous_reading`, `current_reading`, `consumed_kwh`, `recorded_by_user_id`, `reading_date`, `photo_uri`, `is_low_reading_override`, `override_reason`, `notes`, `created_at`.
-   - قيد فريد مركب على `(subscriber_id, billing_period)` لمنع تكرار قراءة لنفس الفترة.
+   - `id`, `subscriber_id` (FK -> `subscribers`), `billing_period`, **`reading_half`** (`1` للنصف الأول 1-15، `2` للنصف الثاني 16-نهاية الشهر), `previous_reading`, `current_reading`, `consumed_kwh`, `recorded_by_user_id`, `reading_date`, `photo_uri`, `is_low_reading_override`, `override_reason`, `notes`, `created_at`.
+   - قيد فريد مركب على `(subscriber_id, billing_period, reading_half)` لمنع تكرار قراءة لنفس المشترك في نفس النصف من الشهر، مع السماح بقراءة في النصف الأول وأخرى في النصف الثاني من نفس الشهر، وفهرس `(billing_period, reading_half)` لتسريع تجميع الاستهلاك.
 
 5. **`invoices` (الفواتير):**
    - `id`, `invoice_number` (فريد `INV-2027-XXXX`), `subscriber_id` (FK), `meter_reading_id` (FK فريد), `tariff_id` (FK), `billing_period`, `previous_reading`, `current_reading`, `consumed_kwh`, `unit_price_applied`, `fixed_fee_applied`, `energy_amount`, `previous_arrears_applied`, `credit_deducted`, `net_payable_amount`, `paid_amount`, `remaining_amount`, `carried_over_to_invoice_id`, `status` (`UNPAID`, `PARTIAL`, `PAID`, `CARRIED_OVER`, `CANCELLED`), `price_modified_at`, `price_modified_by`, `price_modification_reason`, `issued_at`, `due_date`.
@@ -61,4 +61,5 @@
 - **`MIGRATION_2_3` (v2 -> v3):** إضافة لقطات الإيصالات والتحصيلات وإعادة بناء جدول التذكيرات لدعم التذكيرات العامة والمرتبطة.
 - **`MIGRATION_3_4` (v3 -> v4):** إضافة الصلاحيات المخصصة لكل مستخدم وطابع المزامنة `updated_at` و`sync_id`.
 - **`MIGRATION_4_5` (v4 -> v5):** إضافة حقل `biometric_enabled` لجدول `users` (`ALTER TABLE users ADD COLUMN biometric_enabled INTEGER NOT NULL DEFAULT 0`) لتمكين أو إيقاف الدخول بالبصمة لكل حساب دون المساس بالبيانات السابقة.
-- تدعم **الاستعادة الآمنة عبر 18 خطوة** استيراد نسخ الإصدارات `v1..v5` وترقيتها داخل مجلد عزل مؤقت قبل استبدال قاعدة البيانات الحية.
+- **`MIGRATION_5_6` (v5 -> v6):** إعادة بناء جدول `meter_readings` بشكل غير هدّام لإضافة عمود `reading_half` (مع التصنيف التلقائي للقراءات السابقة حسب يوم القراءة: `1..15 -> 1` و`16..نهاية الشهر -> 2`) وتحديث الفهرس الفريد إلى `(subscriber_id, billing_period, reading_half)` مع فهرس `(billing_period, reading_half)`.
+- تدعم **الاستعادة الآمنة عبر 18 خطوة** استيراد نسخ الإصدارات `v1..v6` وترقيتها داخل مجلد عزل مؤقت قبل استبدال قاعدة البيانات الحية.

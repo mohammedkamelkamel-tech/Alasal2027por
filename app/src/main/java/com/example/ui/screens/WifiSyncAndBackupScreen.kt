@@ -639,7 +639,7 @@ fun WifiSyncAndBackupScreen(
                                 ) {
                                     OutlinedButton(
                                         onClick = { onVerifyBackup(recFile) },
-                                        modifier = Modifier.weight(1f).height(44.dp).testTag("verify_backup_${rec.fileName}")
+                                        modifier = Modifier.weight(1f).height(48.dp).testTag("verify_backup_${rec.fileName}")
                                     ) {
                                         Text("فحص", maxLines = 1)
                                     }
@@ -650,7 +650,7 @@ fun WifiSyncAndBackupScreen(
                                                 runCatching { context.startActivity(intent) }
                                             }
                                         },
-                                        modifier = Modifier.weight(1f).height(44.dp).testTag("share_backup_${rec.fileName}")
+                                        modifier = Modifier.weight(1f).height(48.dp).testTag("share_backup_${rec.fileName}")
                                     ) {
                                         Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.size(4.dp))
@@ -659,13 +659,13 @@ fun WifiSyncAndBackupScreen(
                                     Button(
                                         onClick = { pendingRestoreFile = recFile },
                                         enabled = canManageBackups,
-                                        modifier = Modifier.weight(1f).height(44.dp).testTag("restore_backup_${rec.fileName}")
+                                        modifier = Modifier.weight(1f).height(48.dp).testTag("restore_backup_${rec.fileName}")
                                     ) {
                                         Text("استعادة", maxLines = 1)
                                     }
                                     IconButton(
                                         onClick = { onDeleteBackup(recFile) },
-                                        modifier = Modifier.size(44.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Filled.DeleteOutline, contentDescription = "حذف النسخة", tint = alasalColors.arrearsRed)
                                     }

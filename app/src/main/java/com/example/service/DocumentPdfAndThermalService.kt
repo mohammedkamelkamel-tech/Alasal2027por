@@ -29,6 +29,7 @@ import com.example.R
 import com.example.data.local.entity.ReceiptEntity
 import com.example.domain.finance.FieldCollectionSheetItem
 import com.example.domain.finance.GeneratedReport
+import com.example.domain.finance.MonthlyConsumptionSummary
 import com.example.domain.finance.StationReportGenerator
 import com.example.domain.finance.SubscriberAccountStatement
 import java.io.ByteArrayOutputStream
@@ -993,6 +994,245 @@ object DocumentPdfAndThermalService {
             )
         }
         file.writeText(sb.toString(), Charsets.UTF_8)
+        return file
+    }
+
+    /**
+     * Generates a professional A4 PDF report for Monthly & Semi-Monthly Total Consumption
+     * (First Half + Second Half + Final Monthly Total) branded with Alasal Station logo & watermark.
+     */
+    fun generateMonthlyConsumptionA4Pdf(
+        context: Context,
+        summary: MonthlyConsumptionSummary,
+        stationAddress: String = "محطة العسل لتوليد وتوزيع الكهرباء",
+        stationPhone: String = "770002027",
+        outputFile: File? = null
+    ): File {
+        val dir = File(context.cacheDir, "shared_pdfs").apply { mkdirs() }
+        val file = outputFile ?: File(dir, "MonthlyConsumption_${summary.periodKey}.pdf")
+        val typeface = loadArabicTypeface(context)
+        val dateFormat = SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar"))
+        val printedAt = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar")).format(Date())
+
+        // Flatten all logical rows across First Half and Second Half for clean multi-page pagination
+        data class ConsumptionPdfRow(
+            val isSectionHeader: Boolean = false,
+            val isSubtotal: Boolean = false,
+            val isGrandTotal: Boolean = false,
+            val sectionTitle: String = "",
+            val cells: List<String> = emptyList()
+        )
+
+        val allRows = buildList {
+            // Section 1: First Half
+            add(
+                ConsumptionPdfRow(
+                    isSectionHeader = true,
+                    sectionTitle = "أولاً: ${summary.firstHalf.titleAr} — (${summary.firstHalfMetersCount} عداد | الإجمالي: ${summary.firstHalf.totalConsumedKwh} ك.و.س)"
+                )
+            )
+            if (summary.firstHalf.items.isEmpty()) {
+                add(ConsumptionPdfRow(cells = listOf("-", "لا توجد قراءات مسجلة في النصف الأول", "-", "-", "0.0", "-")))
+            } else {
+                summary.firstHalf.items.forEach { item ->
+                    add(
+                        ConsumptionPdfRow(
+                            cells = listOf(
+                                item.subscriberCode,
+                                item.subscriberName,
+                                "${item.previousReading}",
+                                "${item.currentReading}",
+                                "${item.consumedKwh} ك.و.س",
+                                dateFormat.format(Date(item.readingDate))
+                            )
+                        )
+                    )
+                }
+            }
+            add(
+                ConsumptionPdfRow(
+                    isSubtotal = true,
+                    cells = listOf(
+                        "المجموع",
+                        "إجمالي استهلاك النصف الأول (${summary.firstHalfMetersCount} عداد)",
+                        "-",
+                        "-",
+                        "${summary.firstHalf.totalConsumedKwh} ك.و.س",
+                        "النصف الأول"
+                    )
+                )
+            )
+
+            // Section 2: Second Half
+            add(
+                ConsumptionPdfRow(
+                    isSectionHeader = true,
+                    sectionTitle = "ثانياً: ${summary.secondHalf.titleAr} — (${summary.secondHalfMetersCount} عداد | الإجمالي: ${summary.secondHalf.totalConsumedKwh} ك.و.س)"
+                )
+            )
+            if (summary.secondHalf.items.isEmpty()) {
+                add(ConsumptionPdfRow(cells = listOf("-", "لا توجد قراءات مسجلة في النصف الثاني", "-", "-", "0.0", "-")))
+            } else {
+                summary.secondHalf.items.forEach { item ->
+                    add(
+                        ConsumptionPdfRow(
+                            cells = listOf(
+                                item.subscriberCode,
+                                item.subscriberName,
+                                "${item.previousReading}",
+                                "${item.currentReading}",
+                                "${item.consumedKwh} ك.و.س",
+                                dateFormat.format(Date(item.readingDate))
+                            )
+                        )
+                    )
+                }
+            }
+            add(
+                ConsumptionPdfRow(
+                    isSubtotal = true,
+                    cells = listOf(
+                        "المجموع",
+                        "إجمالي استهلاك النصف الثاني (${summary.secondHalfMetersCount} عداد)",
+                        "-",
+                        "-",
+                        "${summary.secondHalf.totalConsumedKwh} ك.و.س",
+                        "النصف الثاني"
+                    )
+                )
+            )
+
+            // Final Grand Summary Row
+            add(
+                ConsumptionPdfRow(
+                    isGrandTotal = true,
+                    cells = listOf(
+                        "الإجمالي",
+                        "الإجمالي النهائي لشهر ${summary.monthTitleAr} ${summary.year} (${summary.totalReadingsCount} قراءة)",
+                        "ن1: ${summary.firstHalfMetersCount}",
+                        "ن2: ${summary.secondHalfMetersCount}",
+                        "${summary.totalMonthlyKwh} ك.و.س",
+                        summary.periodKey
+                    )
+                )
+            )
+        }
+
+        // 6 RTL columns summing to 531f
+        val columns = listOf("الكود", "اسم المشترك", "القراءة السابقة", "القراءة الحالية", "صافي الاستهلاك", "تاريخ القراءة")
+        val colWidths = listOf(60f, 155f, 76f, 76f, 88f, 76f)
+
+        val firstPageCapacity = 16
+        val nextPageCapacity = 21
+        val chunks = mutableListOf<List<ConsumptionPdfRow>>()
+        chunks.add(allRows.take(firstPageCapacity))
+        var offset = firstPageCapacity
+        while (offset < allRows.size) {
+            chunks.add(allRows.subList(offset, (offset + nextPageCapacity).coerceAtMost(allRows.size)))
+            offset += nextPageCapacity
+        }
+
+        val pages = chunks.mapIndexed { pageIdx, slice ->
+            val pageNum = pageIdx + 1
+            PdfPageSpec(A4_WIDTH_PT, A4_HEIGHT_PT) { canvas ->
+                var y = drawA4PageDecor(
+                    context = context,
+                    canvas = canvas,
+                    typeface = typeface,
+                    title = if (pageNum == 1) {
+                        "تقرير إجمالي الاستهلاك الشهري — ${summary.monthTitleAr} ${summary.year}"
+                    } else {
+                        "تقرير إجمالي الاستهلاك — ${summary.monthTitleAr} ${summary.year} (تابع)"
+                    },
+                    subtitle = "الفترة: ${summary.periodKey} | تاريخ الإصدار: $printedAt",
+                    stationName = "محطة العسل 2027 (Alasal2027)",
+                    stationPhone = stationPhone,
+                    stationAddress = stationAddress,
+                    pageNumber = pageNum
+                )
+
+                if (pageNum == 1) {
+                    val sumWidths = listOf(177f, 177f, 177f)
+                    drawRtlRow(
+                        canvas,
+                        y,
+                        26f,
+                        listOf(
+                            "النصف الأول: ${summary.firstHalf.totalConsumedKwh} ك.و.س (${summary.firstHalfMetersCount} عداد)",
+                            "النصف الثاني: ${summary.secondHalf.totalConsumedKwh} ك.و.س (${summary.secondHalfMetersCount} عداد)",
+                            "الإجمالي الشهري: ${summary.totalMonthlyKwh} ك.و.س (${summary.totalReadingsCount} قراءة)"
+                        ),
+                        sumWidths,
+                        COLOR_HIGHLIGHT_BG,
+                        COLOR_NAVY,
+                        typeface,
+                        isBold = true,
+                        fontSize = 8.8f
+                    )
+                    y += 34f
+                }
+
+                drawRtlRow(canvas, y, 26f, columns, colWidths, COLOR_NAVY, Color.WHITE, typeface, isBold = true, fontSize = 8.5f)
+                y += 26f
+
+                slice.forEachIndexed { rowIdx, row ->
+                    when {
+                        row.isSectionHeader -> {
+                            drawRtlRow(
+                                canvas,
+                                y,
+                                24f,
+                                listOf(row.sectionTitle),
+                                listOf(531f),
+                                0xFFE2E8F0.toInt(),
+                                COLOR_NAVY,
+                                typeface,
+                                isBold = true,
+                                fontSize = 9.2f
+                            )
+                            y += 24f
+                        }
+                        row.isGrandTotal -> {
+                            drawRtlRow(
+                                canvas,
+                                y,
+                                30f,
+                                row.cells,
+                                colWidths,
+                                COLOR_NAVY,
+                                Color.WHITE,
+                                typeface,
+                                isBold = true,
+                                fontSize = 8.8f
+                            )
+                            y += 30f
+                        }
+                        row.isSubtotal -> {
+                            drawRtlRow(
+                                canvas,
+                                y,
+                                26f,
+                                row.cells,
+                                colWidths,
+                                COLOR_HIGHLIGHT_BG,
+                                COLOR_GREEN,
+                                typeface,
+                                isBold = true,
+                                fontSize = 8.5f
+                            )
+                            y += 26f
+                        }
+                        else -> {
+                            val bg = if (rowIdx % 2 == 1) COLOR_LIGHT_BG else null
+                            drawRtlRow(canvas, y, 26f, row.cells, colWidths, bg, COLOR_NAVY, typeface, fontSize = 8.5f)
+                            y += 26f
+                        }
+                    }
+                }
+            }
+        }
+
+        writePagesPdf(file, pages)
         return file
     }
 

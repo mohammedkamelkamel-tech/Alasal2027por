@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
@@ -62,8 +63,10 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.entity.CollectionWithReceipt
 import com.example.data.local.entity.InvoiceEntity
+import com.example.data.local.entity.MeterReadingEntity
 import com.example.data.local.entity.ReceiptEntity
 import com.example.data.local.entity.SubscriberEntity
+import com.example.domain.finance.ConsumptionSummaryCalculator
 import com.example.domain.finance.StationReportGenerator
 import com.example.service.InvoiceShareAndPrintService
 import com.example.ui.components.AlasalBrandHeader
@@ -74,6 +77,7 @@ import com.example.ui.viewmodel.FeedbackMessage
 import com.example.ui.viewmodel.FoundationUiState
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -85,11 +89,13 @@ fun DashboardScreen(
     invoices: List<InvoiceEntity> = emptyList(),
     collectionsWithReceipts: List<CollectionWithReceipt> = emptyList(),
     subscribers: List<SubscriberEntity> = state.subscribers,
+    readings: List<MeterReadingEntity> = emptyList(),
     onDismissFeedback: () -> Unit,
     onToggleTheme: () -> Unit,
     onVerifySchema: () -> Unit,
     onScheduleAuditWorker: () -> Unit,
     onRequestSafBackup: () -> Unit,
+    onNavigateToTotalConsumption: () -> Unit = {},
     onNavigateToCollections: () -> Unit = {},
     onNavigateToReports: () -> Unit = {},
     onNavigateToFieldCollection: () -> Unit = onNavigateToReports,
@@ -112,6 +118,19 @@ fun DashboardScreen(
     val activeTariffLabel = state.dashboard.primaryTariff?.let {
         "${it.pricePerKwh} / ك.و.س"
     } ?: "غير محددة"
+
+    val currentMonthConsumption = remember(readings, subscribers, invoices) {
+        val cal = Calendar.getInstance()
+        val year = cal.get(Calendar.YEAR)
+        val month = cal.get(Calendar.MONTH) + 1
+        ConsumptionSummaryCalculator.buildMonthSummary(
+            year = year,
+            month = month,
+            readings = readings,
+            subscribers = subscribers,
+            invoicedReadingIds = invoices.mapNotNull { it.meterReadingId }.toSet()
+        )
+    }
 
     val latestInvoices = remember(invoices) {
         invoices.sortedByDescending { it.issuedAt }.take(4)
@@ -202,6 +221,15 @@ fun DashboardScreen(
                     ) {
                         item {
                             DashboardShortcutButton(
+                                icon = Icons.Filled.Bolt,
+                                label = stringResource(R.string.title_total_consumption),
+                                accent = alasalColors.gold,
+                                testTag = "shortcut_total_consumption",
+                                onClick = onNavigateToTotalConsumption
+                            )
+                        }
+                        item {
+                            DashboardShortcutButton(
                                 icon = Icons.Filled.Payments,
                                 label = "التحصيل والإيصالات",
                                 accent = alasalColors.creditGreen,
@@ -271,6 +299,126 @@ fun DashboardScreen(
                                 testTag = "shortcut_subscribers",
                                 onClick = onNavigateToSubscribers
                             )
+                        }
+                    }
+                }
+            }
+
+            item(key = "total_consumption_featured_card") {
+                Card(
+                    onClick = onNavigateToTotalConsumption,
+                    modifier = Modifier
+                        .widthIn(max = 800.dp)
+                        .fillMaxWidth()
+                        .testTag("dashboard_total_consumption_card"),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    border = BorderStroke(1.5.dp, alasalColors.gold)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = alasalColors.gold.copy(alpha = 0.22f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Bolt,
+                                        contentDescription = stringResource(R.string.title_total_consumption),
+                                        tint = alasalColors.gold,
+                                        modifier = Modifier.padding(8.dp).size(24.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = stringResource(R.string.title_total_consumption),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Text(
+                                        text = "${currentMonthConsumption.monthTitleAr} ${currentMonthConsumption.year} — شهري ونصف شهري",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "${numberFormat.format(currentMonthConsumption.totalMonthlyKwh)} ك.و.س",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = alasalColors.gold,
+                                    modifier = Modifier.testTag("dashboard_current_month_kwh")
+                                )
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "فتح إجمالي الاستهلاك",
+                                    tint = alasalColors.gold
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                    Text(
+                                        text = "القراءة الأولى (1-15)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                                    )
+                                    Text(
+                                        text = "${numberFormat.format(currentMonthConsumption.firstHalf.totalConsumedKwh)} ك.و.س (${currentMonthConsumption.firstHalf.metersReadCount} عداد)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+                            }
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                    Text(
+                                        text = "القراءة الثانية (16-آخر الشهر)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                                    )
+                                    Text(
+                                        text = "${numberFormat.format(currentMonthConsumption.secondHalf.totalConsumedKwh)} ك.و.س (${currentMonthConsumption.secondHalf.metersReadCount} عداد)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+                            }
                         }
                     }
                 }

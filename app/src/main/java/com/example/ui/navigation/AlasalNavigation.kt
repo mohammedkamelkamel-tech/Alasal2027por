@@ -82,6 +82,7 @@ import com.example.ui.screens.RemindersAndNotificationsScreen
 import com.example.ui.screens.ReportsAndStatementsScreen
 import com.example.ui.screens.SubscribersManagementScreen
 import com.example.ui.screens.SystemDiagnosticsScreen
+import com.example.ui.screens.TotalConsumptionScreen
 import com.example.ui.screens.WifiSyncAndBackupScreen
 import com.example.ui.viewmodel.BillingViewModel
 import com.example.ui.viewmodel.FeedbackMessage
@@ -100,6 +101,7 @@ object AlasalRoutes {
     const val ROUTE_REMINDERS = "reminders"
     const val ROUTE_ACCOUNTS = "accounts"
     const val ROUTE_SYNC_BACKUP = "sync_backup"
+    const val ROUTE_TOTAL_CONSUMPTION = "total_consumption"
 }
 
 private data class NavDestinationItem(
@@ -347,6 +349,7 @@ fun AlasalAppShell(
                                         invoices = invoices,
                                         collectionsWithReceipts = collectionsWithReceipts,
                                         subscribers = uiState.subscribers,
+                                        readings = meterReadings,
                                         onDismissFeedback = foundationViewModel::clearFeedback,
                                         onToggleTheme = { foundationViewModel.cycleThemeMode(isDarkTheme) },
                                         onVerifySchema = foundationViewModel::verifyDatabaseIntegrity,
@@ -355,6 +358,9 @@ fun AlasalAppShell(
                                         },
                                         onRequestSafBackup = {
                                             safExportLauncher.launch("alasal2027_backup.json")
+                                        },
+                                        onNavigateToTotalConsumption = {
+                                            navigateToSecondaryRoute(AlasalRoutes.ROUTE_TOTAL_CONSUMPTION)
                                         },
                                         onNavigateToCollections = {
                                             navigateToSecondaryRoute(AlasalRoutes.ROUTE_COLLECTIONS)
@@ -418,6 +424,8 @@ fun AlasalAppShell(
                                         feedback = billingFeedback,
                                         onDismissFeedback = billingViewModel::clearFeedback,
                                         onSaveReading = billingViewModel::saveMeterReading,
+                                        onUpdateReading = billingViewModel::updateMeterReading,
+                                        onDeleteReading = billingViewModel::deleteMeterReading,
                                         onIssueInvoiceForReading = { readingId ->
                                             billingViewModel.issueInvoiceForExistingReading(readingId)
                                         },
@@ -489,6 +497,9 @@ fun AlasalAppShell(
                                         },
                                         onNavigateToSyncBackup = {
                                             navigateToSecondaryRoute(AlasalRoutes.ROUTE_SYNC_BACKUP)
+                                        },
+                                        onNavigateToTotalConsumption = {
+                                            navigateToSecondaryRoute(AlasalRoutes.ROUTE_TOTAL_CONSUMPTION)
                                         }
                                     )
                                 }
@@ -641,6 +652,16 @@ fun AlasalAppShell(
                                         onExecuteSafeRestoreFromUri = { uri ->
                                             foundationViewModel.executeSafeRestoreFromUri(uri)
                                         }
+                                    )
+                                }
+
+                                composable(AlasalRoutes.ROUTE_TOTAL_CONSUMPTION) {
+                                    TotalConsumptionScreen(
+                                        subscribers = uiState.subscribers,
+                                        readings = meterReadings,
+                                        invoices = invoices,
+                                        notificationPrefs = notificationPrefs,
+                                        onNavigateBack = { navController.popBackStack() }
                                     )
                                 }
                             }

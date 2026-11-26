@@ -115,6 +115,7 @@ data class SyncSubscriberDto(
 data class SyncReadingDto(
     val subscriberCode: String,
     val billingPeriod: String,
+    val readingHalf: Int = 1,
     val previousReading: Double,
     val currentReading: Double,
     val consumedKwh: Double,
@@ -129,6 +130,7 @@ data class SyncInvoiceDto(
     val invoiceNumber: String,
     val subscriberCode: String,
     val readingPeriod: String?,
+    val readingHalf: Int? = null,
     val tariffCode: String,
     val billingPeriod: String,
     val previousReading: Double,
@@ -356,6 +358,7 @@ data class StationSyncEnvelope(
                     put(JSONObject().apply {
                         put("subscriberCode", r.subscriberCode)
                         put("billingPeriod", r.billingPeriod)
+                        put("readingHalf", r.readingHalf)
                         put("previousReading", r.previousReading)
                         put("currentReading", r.currentReading)
                         put("consumedKwh", r.consumedKwh)
@@ -373,6 +376,7 @@ data class StationSyncEnvelope(
                         put("invoiceNumber", inv.invoiceNumber)
                         put("subscriberCode", inv.subscriberCode)
                         put("readingPeriod", inv.readingPeriod ?: JSONObject.NULL)
+                        put("readingHalf", inv.readingHalf ?: JSONObject.NULL)
                         put("tariffCode", inv.tariffCode)
                         put("billingPeriod", inv.billingPeriod)
                         put("previousReading", inv.previousReading)
@@ -619,6 +623,7 @@ data class StationSyncEnvelope(
                             SyncReadingDto(
                                 subscriberCode = o.getString("subscriberCode"),
                                 billingPeriod = o.getString("billingPeriod"),
+                                readingHalf = o.optInt("readingHalf", 1),
                                 previousReading = o.optDouble("previousReading", 0.0),
                                 currentReading = o.getDouble("currentReading"),
                                 consumedKwh = o.getDouble("consumedKwh"),
@@ -639,6 +644,7 @@ data class StationSyncEnvelope(
                                 invoiceNumber = o.getString("invoiceNumber"),
                                 subscriberCode = o.getString("subscriberCode"),
                                 readingPeriod = o.optStringOrNull("readingPeriod"),
+                                readingHalf = if (!o.has("readingHalf") || o.isNull("readingHalf")) null else o.optInt("readingHalf", 1),
                                 tariffCode = o.optString("tariffCode", "DEFAULT-RESIDENTIAL"),
                                 billingPeriod = o.getString("billingPeriod"),
                                 previousReading = o.optDouble("previousReading", 0.0),

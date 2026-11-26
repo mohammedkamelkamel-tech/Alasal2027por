@@ -161,6 +161,7 @@ class StationSyncRepository(
                 SyncReadingDto(
                     subscriberCode = sCode,
                     billingPeriod = r.billingPeriod,
+                    readingHalf = r.readingHalf,
                     previousReading = r.previousReading,
                     currentReading = r.currentReading,
                     consumedKwh = r.consumedKwh,
@@ -174,10 +175,12 @@ class StationSyncRepository(
             invoices = invoices.mapNotNull { inv ->
                 val sCode = subById[inv.subscriberId]?.subscriberCode ?: return@mapNotNull null
                 val tCode = tariffById[inv.tariffId]?.tariffCode ?: return@mapNotNull null
+                val linkedReading = inv.meterReadingId?.let { readById[it] }
                 SyncInvoiceDto(
                     invoiceNumber = inv.invoiceNumber,
                     subscriberCode = sCode,
-                    readingPeriod = inv.meterReadingId?.let { readById[it]?.billingPeriod },
+                    readingPeriod = linkedReading?.billingPeriod,
+                    readingHalf = linkedReading?.readingHalf,
                     tariffCode = tCode,
                     billingPeriod = inv.billingPeriod,
                     previousReading = inv.previousReading,
@@ -513,19 +516,22 @@ class StationSyncRepository(
                 }
             }
 
-            // 7. Meter Readings (deduped by subscriber + billingPeriod; keeps newer if not yet invoiced)
+            // 7. Meter Readings (deduped by subscriber + billingPeriod + readingHalf; keeps newer if not yet invoiced)
             val localReadings = billingDao.getAllMeterReadingsOnce().toMutableList()
-            val readingBySubAndPeriod = localReadings.associateBy { it.subscriberId to it.billingPeriod }.toMutableMap()
+            val readingBySubPeriodHalf = localReadings.associateBy { Triple(it.subscriberId, it.billingPeriod, it.readingHalf) }.toMutableMap()
             val invoicedReadingIds = billingDao.getAllInvoicesOnce().mapNotNull { it.meterReadingId }.toSet()
 
             incoming.readings.forEach { r ->
                 val sub = subCodeRemap[r.subscriberCode] ?: localSubsByCode[r.subscriberCode] ?: return@forEach
-                val local = readingBySubAndPeriod[sub.id to r.billingPeriod]
+                val half = if (r.readingHalf == 2) 2 else 1
+                val key = Triple(sub.id, r.billingPeriod, half)
+                val local = readingBySubPeriodHalf[key]
                 if (local == null) {
                     val newId = billingDao.insertMeterReading(
                         MeterReadingEntity(
                             subscriberId = sub.id,
                             billingPeriod = r.billingPeriod,
+                            readingHalf = half,
                             previousReading = r.previousReading,
                             currentReading = r.currentReading,
                             consumedKwh = r.consumedKwh,
@@ -537,7 +543,7 @@ class StationSyncRepository(
                         )
                     )
                     val saved = billingDao.getReadingById(newId)!!
-                    readingBySubAndPeriod[sub.id to r.billingPeriod] = saved
+                    readingBySubPeriodHalf[key] = saved
                     inserted++
                 } else if (local.id !in invoicedReadingIds && r.readingDate > local.readingDate) {
                     val up = local.copy(
@@ -548,7 +554,7 @@ class StationSyncRepository(
                         notes = r.notes
                     )
                     billingDao.updateMeterReading(up)
-                    readingBySubAndPeriod[sub.id to r.billingPeriod] = up
+                    readingBySubPeriodHalf[key] = up
                     updated++
                 } else {
                     if (abs(local.currentReading - r.currentReading) > 0.001) conflicts++
@@ -611,7 +617,10 @@ class StationSyncRepository(
                     }
 
                     val targetReading = inv.readingPeriod?.let { period ->
-                        readingBySubAndPeriod[sub.id to period]?.id
+                        val half = inv.readingHalf ?: 1
+                        readingBySubPeriodHalf[Triple(sub.id, period, half)]?.id
+                            ?: readingBySubPeriodHalf[Triple(sub.id, period, 1)]?.id
+                            ?: readingBySubPeriodHalf[Triple(sub.id, period, 2)]?.id
                     }?.takeIf { rId -> allLocalInvoices.none { it.meterReadingId == rId } }
 
                     val tariffId = localTariffs[inv.tariffCode]?.id ?: defaultTariffId

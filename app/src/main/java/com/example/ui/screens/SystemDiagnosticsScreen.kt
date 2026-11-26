@@ -79,6 +79,7 @@ fun SystemDiagnosticsScreen(
     onNavigateToReminders: () -> Unit = {},
     onNavigateToAccounts: () -> Unit = {},
     onNavigateToSyncBackup: () -> Unit = {},
+    onNavigateToTotalConsumption: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val alasalColors = LocalAlasalColors.current
@@ -143,6 +144,13 @@ fun SystemDiagnosticsScreen(
                             Spacer(modifier = Modifier.size(6.dp))
                             Text("المزامنة والنسخ الآمن", maxLines = 1)
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = onNavigateToTotalConsumption,
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("system_total_consumption_button")
+                    ) {
+                        Text(text = stringResource(R.string.title_total_consumption) + " (الشهري ونصف الشهري)")
                     }
 
                     Row(
@@ -330,7 +338,7 @@ fun SystemDiagnosticsScreen(
                                         )
                                     }
                                 },
-                                modifier = Modifier.fillMaxWidth().height(44.dp).testTag("whatsapp_country_code_save_button")
+                                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("whatsapp_country_code_save_button")
                             ) {
                                 Text("حفظ بيانات المؤسسة ورمز الدولة لواتساب")
                             }

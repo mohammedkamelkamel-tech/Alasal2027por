@@ -68,7 +68,8 @@ class Phase6UiAndSecurityRobolectricTest {
         composeTestRule.onNodeWithTag("sub_input_meter").performTextInput("MTR-P6-1")
         composeTestRule.onNodeWithTag("sub_save_button").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithTag("subscribers_screen").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("sub_save_button").fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodesWithTag("subscriber_card_SUB-P6-1").fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNodeWithTag("subscribers_screen")
             .performScrollToNode(hasTestTag("subscriber_card_SUB-P6-1"))

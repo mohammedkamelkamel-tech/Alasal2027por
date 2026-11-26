@@ -13,6 +13,7 @@ import com.example.data.local.entity.ReceiptEntity
 import com.example.data.repository.BillingRepository
 import com.example.data.repository.InvoiceDetailBundle
 import com.example.data.repository.MeterReadingInput
+import com.example.data.repository.MeterReadingUpdateInput
 import com.example.service.AlasalNotificationService
 import com.example.service.ThemePreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -173,6 +174,40 @@ class BillingViewModel(
                 }
                 .onFailure { error ->
                     _feedback.value = FeedbackMessage.Failure(error.message ?: "تعذر حفظ القراءة")
+                }
+        }
+    }
+
+    fun updateMeterReading(
+        input: MeterReadingUpdateInput,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            billingRepository.updateMeterReading(input, actorUserId = currentActorUserId())
+                .onSuccess { updated ->
+                    _feedback.value = FeedbackMessage.Success(
+                        "تم تعديل القراءة وتحديث الاستهلاك إلى ${updated.consumedKwh} ك.و.س بنجاح"
+                    )
+                    onComplete()
+                }
+                .onFailure { error ->
+                    _feedback.value = FeedbackMessage.Failure(error.message ?: "تعذر تعديل القراءة")
+                }
+        }
+    }
+
+    fun deleteMeterReading(
+        readingId: Long,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            billingRepository.deleteMeterReadingSafely(readingId, actorUserId = currentActorUserId())
+                .onSuccess { msg ->
+                    _feedback.value = FeedbackMessage.Success(msg)
+                    onComplete()
+                }
+                .onFailure { error ->
+                    _feedback.value = FeedbackMessage.Failure(error.message ?: "تعذر حذف القراءة")
                 }
         }
     }

@@ -761,7 +761,8 @@ class BackupAndRestoreManager(
                             AlasalDatabase.MIGRATION_1_2,
                             AlasalDatabase.MIGRATION_2_3,
                             AlasalDatabase.MIGRATION_3_4,
-                            AlasalDatabase.MIGRATION_4_5
+                            AlasalDatabase.MIGRATION_4_5,
+                            AlasalDatabase.MIGRATION_5_6
                         )
                         .build()
                     try {
@@ -842,6 +843,10 @@ class BackupAndRestoreManager(
                             }
                             if (v < 5) {
                                 AlasalDatabase.MIGRATION_4_5.migrate(db)
+                                v = 5
+                            }
+                            if (v < 6) {
+                                AlasalDatabase.MIGRATION_5_6.migrate(db)
                             }
                         }
                     })
