@@ -15,6 +15,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
@@ -224,7 +226,9 @@ class AlasalUiAndLaunchRobolectricTest {
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             composeTestRule.onAllNodesWithTag("collection_submit_button").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("collection_amount_input").performTextReplacement("35")
+        composeTestRule.onNodeWithTag("collection_amount_input").performScrollTo().performTextReplacement("35")
+        composeTestRule.onNodeWithTag("collections_screen").performTouchInput { swipeUp() }
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("collection_submit_button").performClick()
 
         // Receipt detail dialog auto-opens with thermal 58mm/80mm & A4/Image/WhatsApp options

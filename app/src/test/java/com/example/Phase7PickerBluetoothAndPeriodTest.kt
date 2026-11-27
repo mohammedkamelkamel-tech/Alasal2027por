@@ -9,11 +9,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
@@ -170,6 +173,8 @@ class Phase7PickerBluetoothAndPeriodTest {
 
         // Dialog closes and invoices list filters to subscriber #2
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("invoices_screen")
+            .performScrollToNode(hasTestTag("invoice_card_INV-2026-0002"))
         composeTestRule.onNodeWithTag("invoice_card_INV-2026-0002").assertIsDisplayed()
         assertTrue(
             composeTestRule.onAllNodesWithTag("invoice_card_INV-2026-0001").fetchSemanticsNodes().isEmpty()
@@ -289,7 +294,9 @@ class Phase7PickerBluetoothAndPeriodTest {
             }
         }
 
-        // Open paired Bluetooth devices dialog
+        // Scroll to dedicated Bluetooth printer card and open paired Bluetooth devices dialog
+        composeTestRule.onNodeWithTag("system_diagnostics_screen")
+            .performScrollToNode(hasTestTag("bluetooth_printer_settings_card"))
         composeTestRule.onNodeWithTag("select_bluetooth_printer_button").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
             composeTestRule.onAllNodesWithTag("bluetooth_devices_dialog").fetchSemanticsNodes().isNotEmpty()
@@ -317,6 +324,8 @@ class Phase7PickerBluetoothAndPeriodTest {
         assertEquals("66:32:11:AA:BB:02", persisted.printerDeviceAddress)
 
         // Trigger direct Test Print ("طباعة تجريبية")
+        composeTestRule.onNodeWithTag("system_diagnostics_screen")
+            .performScrollToNode(hasTestTag("bluetooth_printer_settings_card"))
         composeTestRule.onNodeWithTag("bluetooth_test_print_button").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) { capturedBytes != null }
         assertEquals("66:32:11:AA:BB:02", capturedMac)
@@ -452,6 +461,8 @@ class Phase7PickerBluetoothAndPeriodTest {
             }
         }
 
+        composeTestRule.onNodeWithTag("invoices_screen")
+            .performScrollToNode(hasTestTag("invoice_card_INV-2026-0101"))
         composeTestRule.onNodeWithTag("invoice_period_INV-2026-0101")
             .assertTextContains("الفترة: من 1/1/2026 إلى 15/1/2026")
         composeTestRule.onNodeWithTag("invoice_print_btn_INV-2026-0101").performClick()
