@@ -194,82 +194,199 @@ abstract class AlasalDatabase : RoomDatabase() {
          */
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                var hasInitialReadingCol = false
-                db.query("PRAGMA table_info(subscribers)").use { cursor ->
-                    val nameIdx = cursor.getColumnIndex("name")
-                    while (cursor.moveToNext()) {
-                        if (nameIdx >= 0 && cursor.getString(nameIdx) == "initial_meter_reading") {
-                            hasInitialReadingCol = true
-                            break
-                        }
+                ensureV6SchemaCompatibility(db)
+            }
+        }
+
+        private fun tableHasColumn(db: SupportSQLiteDatabase, tableName: String, columnName: String): Boolean {
+            db.query("PRAGMA table_info($tableName)").use { cursor ->
+                val nameIdx = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (nameIdx >= 0 && cursor.getString(nameIdx) == columnName) {
+                        return true
                     }
                 }
-                if (!hasInitialReadingCol) {
-                    db.execSQL("ALTER TABLE subscribers ADD COLUMN initial_meter_reading REAL NOT NULL DEFAULT 0.0")
-                }
-
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS meter_readings_v6 (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE RESTRICT,
-                        billing_period TEXT NOT NULL,
-                        reading_half INTEGER NOT NULL DEFAULT 1,
-                        previous_reading REAL NOT NULL,
-                        current_reading REAL NOT NULL,
-                        consumed_kwh REAL NOT NULL,
-                        recorded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                        reading_date INTEGER NOT NULL,
-                        photo_uri TEXT,
-                        is_low_reading_override INTEGER NOT NULL DEFAULT 0,
-                        override_reason TEXT NOT NULL DEFAULT '',
-                        notes TEXT NOT NULL DEFAULT ''
-                    )
-                    """.trimIndent()
-                )
-                db.execSQL(
-                    """
-                    INSERT INTO meter_readings_v6 (
-                        id, subscriber_id, billing_period, reading_half,
-                        previous_reading, current_reading, consumed_kwh,
-                        recorded_by_user_id, reading_date, photo_uri,
-                        is_low_reading_override, override_reason, notes
-                    )
-                    SELECT
-                        id,
-                        subscriber_id,
-                        billing_period,
-                        CASE
-                            WHEN CAST(strftime('%d', reading_date / 1000, 'unixepoch', 'localtime') AS INTEGER) >= 16 THEN 2
-                            ELSE 1
-                        END,
-                        previous_reading,
-                        current_reading,
-                        consumed_kwh,
-                        recorded_by_user_id,
-                        reading_date,
-                        photo_uri,
-                        is_low_reading_override,
-                        override_reason,
-                        notes
-                    FROM meter_readings
-                    """.trimIndent()
-                )
-                db.execSQL("DROP TABLE meter_readings")
-                db.execSQL("ALTER TABLE meter_readings_v6 RENAME TO meter_readings")
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS index_meter_readings_subscriber_id_billing_period_reading_half ON meter_readings(subscriber_id, billing_period, reading_half)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS index_meter_readings_billing_period_reading_half ON meter_readings(billing_period, reading_half)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS index_meter_readings_recorded_by_user_id ON meter_readings(recorded_by_user_id)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS index_meter_readings_reading_date ON meter_readings(reading_date)"
-                )
             }
+            return false
+        }
+
+        private fun getTableIndices(db: SupportSQLiteDatabase, tableName: String): Map<String, Boolean> {
+            val result = mutableMapOf<String, Boolean>()
+            db.query("PRAGMA index_list($tableName)").use { cursor ->
+                val nameIdx = cursor.getColumnIndex("name")
+                val uniqueIdx = cursor.getColumnIndex("unique")
+                while (cursor.moveToNext()) {
+                    if (nameIdx >= 0) {
+                        val name = cursor.getString(nameIdx)
+                        val isUnique = if (uniqueIdx >= 0) cursor.getInt(uniqueIdx) == 1 else false
+                        result[name] = isUnique
+                    }
+                }
+            }
+            return result
+        }
+
+        /**
+         * Idempotently reconciles any v5 or earlier v6 schema variant to match the exact Room v6 schema
+         * (including users.biometric_enabled, subscribers.initial_meter_reading, meter_readings.reading_half,
+         * and the 4 exact v6 indices on meter_readings) without losing any historical rows.
+         *
+         * @return true if any schema adjustment was performed, false if already compliant.
+         */
+        fun ensureV6SchemaCompatibility(db: SupportSQLiteDatabase): Boolean {
+            var modified = false
+
+            if (!tableHasColumn(db, "users", "biometric_enabled")) {
+                db.execSQL("ALTER TABLE users ADD COLUMN biometric_enabled INTEGER NOT NULL DEFAULT 0")
+                modified = true
+            }
+
+            if (!tableHasColumn(db, "subscribers", "initial_meter_reading")) {
+                db.execSQL("ALTER TABLE subscribers ADD COLUMN initial_meter_reading REAL NOT NULL DEFAULT 0.0")
+                modified = true
+            }
+
+            val hasReadingHalf = tableHasColumn(db, "meter_readings", "reading_half")
+            val existingIndices = getTableIndices(db, "meter_readings")
+            val hasUniqueHalfIndex = existingIndices["index_meter_readings_subscriber_id_billing_period_reading_half"] == true
+            val hasPeriodHalfIndex = existingIndices.containsKey("index_meter_readings_billing_period_reading_half")
+            val hasRecordedByIndex = existingIndices.containsKey("index_meter_readings_recorded_by_user_id")
+            val hasReadingDateIndex = existingIndices.containsKey("index_meter_readings_reading_date")
+            val hasLegacyPeriodIndex = existingIndices.containsKey("index_meter_readings_subscriber_id_billing_period")
+
+            if (!hasReadingHalf || !hasUniqueHalfIndex || !hasPeriodHalfIndex || !hasRecordedByIndex || !hasReadingDateIndex || hasLegacyPeriodIndex) {
+                rebuildMeterReadingsToV6(db, hasReadingHalf)
+                modified = true
+            }
+
+            return modified
+        }
+
+        private fun rebuildMeterReadingsToV6(db: SupportSQLiteDatabase, hasReadingHalfColumn: Boolean) {
+            db.execSQL("DROP TABLE IF EXISTS meter_readings_v6")
+            db.execSQL(
+                """
+                CREATE TABLE meter_readings_v6 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE RESTRICT,
+                    billing_period TEXT NOT NULL,
+                    reading_half INTEGER NOT NULL DEFAULT 1,
+                    previous_reading REAL NOT NULL,
+                    current_reading REAL NOT NULL,
+                    consumed_kwh REAL NOT NULL,
+                    recorded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    reading_date INTEGER NOT NULL,
+                    photo_uri TEXT,
+                    is_low_reading_override INTEGER NOT NULL DEFAULT 0,
+                    override_reason TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT ''
+                )
+                """.trimIndent()
+            )
+
+            val selectSql = if (hasReadingHalfColumn) {
+                """
+                SELECT
+                    id, subscriber_id, billing_period, reading_half,
+                    previous_reading, current_reading, consumed_kwh,
+                    recorded_by_user_id, reading_date, photo_uri,
+                    is_low_reading_override, override_reason, notes
+                FROM meter_readings
+                ORDER BY reading_date ASC, id ASC
+                """.trimIndent()
+            } else {
+                """
+                SELECT
+                    id, subscriber_id, billing_period,
+                    CASE
+                        WHEN CAST(strftime('%d', reading_date / 1000, 'unixepoch', 'localtime') AS INTEGER) >= 16 THEN 2
+                        ELSE 1
+                    END AS reading_half,
+                    previous_reading, current_reading, consumed_kwh,
+                    recorded_by_user_id, reading_date, photo_uri,
+                    is_low_reading_override, override_reason, notes
+                FROM meter_readings
+                ORDER BY reading_date ASC, id ASC
+                """.trimIndent()
+            }
+
+            val usedKeys = HashSet<Triple<Long, String, Int>>()
+            val insertSql = """
+                INSERT INTO meter_readings_v6 (
+                    id, subscriber_id, billing_period, reading_half,
+                    previous_reading, current_reading, consumed_kwh,
+                    recorded_by_user_id, reading_date, photo_uri,
+                    is_low_reading_override, override_reason, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+
+            db.query(selectSql).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val subscriberId = cursor.getLong(1)
+                    val rawPeriod = cursor.getString(2) ?: ""
+                    val rawHalf = if (cursor.isNull(3)) 1 else cursor.getInt(3).coerceIn(1, 2)
+                    val previousReading = cursor.getDouble(4)
+                    val currentReading = cursor.getDouble(5)
+                    val consumedKwh = cursor.getDouble(6)
+                    val recordedByUserId: Long? = if (cursor.isNull(7)) null else cursor.getLong(7)
+                    val readingDate = cursor.getLong(8)
+                    val photoUri: String? = if (cursor.isNull(9)) null else cursor.getString(9)
+                    val isLowOverride = cursor.getInt(10)
+                    val overrideReason = cursor.getString(11) ?: ""
+                    val notes = cursor.getString(12) ?: ""
+
+                    var finalPeriod = rawPeriod
+                    var finalHalf = rawHalf
+                    if (!usedKeys.add(Triple(subscriberId, finalPeriod, finalHalf))) {
+                        val altHalf = if (finalHalf == 1) 2 else 1
+                        if (usedKeys.add(Triple(subscriberId, finalPeriod, altHalf))) {
+                            finalHalf = altHalf
+                        } else {
+                            var seq = 2
+                            while (!usedKeys.add(Triple(subscriberId, "$rawPeriod#$seq", finalHalf))) {
+                                seq++
+                            }
+                            finalPeriod = "$rawPeriod#$seq"
+                        }
+                    }
+
+                    db.execSQL(
+                        insertSql,
+                        arrayOf<Any?>(
+                            id,
+                            subscriberId,
+                            finalPeriod,
+                            finalHalf,
+                            previousReading,
+                            currentReading,
+                            consumedKwh,
+                            recordedByUserId,
+                            readingDate,
+                            photoUri,
+                            isLowOverride,
+                            overrideReason,
+                            notes
+                        )
+                    )
+                }
+            }
+
+            db.execSQL("DROP TABLE meter_readings")
+            db.execSQL("ALTER TABLE meter_readings_v6 RENAME TO meter_readings")
+            db.execSQL("DROP INDEX IF EXISTS index_meter_readings_subscriber_id_billing_period")
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_meter_readings_subscriber_id_billing_period_reading_half ON meter_readings(subscriber_id, billing_period, reading_half)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_meter_readings_billing_period_reading_half ON meter_readings(billing_period, reading_half)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_meter_readings_recorded_by_user_id ON meter_readings(recorded_by_user_id)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_meter_readings_reading_date ON meter_readings(reading_date)"
+            )
         }
 
         @Volatile
@@ -277,6 +394,22 @@ abstract class AlasalDatabase : RoomDatabase() {
 
         @Volatile
         private var INSTANCE_APP_CONTEXT: Context? = null
+
+        private fun buildDatabase(appCtx: Context): AlasalDatabase {
+            return Room.databaseBuilder(
+                appCtx,
+                AlasalDatabase::class.java,
+                DATABASE_NAME
+            )
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addCallback(object : Callback() {
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        db.execSQL("PRAGMA foreign_keys=ON;")
+                    }
+                })
+                .build()
+        }
 
         fun getInstance(context: Context): AlasalDatabase {
             val appCtx = context.applicationContext
@@ -292,23 +425,25 @@ abstract class AlasalDatabase : RoomDatabase() {
                     if (current != null) {
                         runCatching { current.close() }
                     }
-                    Room.databaseBuilder(
-                        appCtx,
-                        AlasalDatabase::class.java,
-                        DATABASE_NAME
-                    )
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
-                        .addCallback(object : Callback() {
-                            override fun onOpen(db: SupportSQLiteDatabase) {
-                                super.onOpen(db)
-                                db.execSQL("PRAGMA foreign_keys=ON;")
-                            }
-                        })
-                        .build()
-                        .also {
-                            INSTANCE = it
-                            INSTANCE_APP_CONTEXT = appCtx
-                        }
+                    buildDatabase(appCtx).also {
+                        INSTANCE = it
+                        INSTANCE_APP_CONTEXT = appCtx
+                    }
+                }
+            }
+        }
+
+        /**
+         * Atomically closes any stale singleton instance and creates a fresh Room instance
+         * pointing at the newly replaced live SQLite file.
+         */
+        fun reopenFreshInstance(context: Context): AlasalDatabase {
+            val appCtx = context.applicationContext
+            return synchronized(this) {
+                closeAndResetInstanceLocked(extraInstance = null)
+                buildDatabase(appCtx).also {
+                    INSTANCE = it
+                    INSTANCE_APP_CONTEXT = appCtx
                 }
             }
         }
@@ -317,23 +452,30 @@ abstract class AlasalDatabase : RoomDatabase() {
          * Flushes WAL frames cleanly, closes the Room connection pool, and clears the singleton
          * reference so database files can be safely replaced during transactional restore.
          */
-        @Synchronized
-        fun closeAndResetInstance() {
-            val current = INSTANCE
-            if (current != null) {
+        fun closeAndResetInstance(extraInstance: AlasalDatabase? = null) {
+            synchronized(this) {
+                closeAndResetInstanceLocked(extraInstance)
+            }
+        }
+
+        private fun closeAndResetInstanceLocked(extraInstance: AlasalDatabase?) {
+            val targets = linkedSetOf<AlasalDatabase>()
+            INSTANCE?.let { targets.add(it) }
+            extraInstance?.let { targets.add(it) }
+            targets.forEach { dbInstance ->
                 runCatching {
-                    if (current.isOpen) {
-                        current.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use { c ->
+                    if (dbInstance.isOpen) {
+                        dbInstance.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use { c ->
                             c.moveToFirst()
                         }
                     }
                 }
                 runCatching {
-                    current.close()
+                    dbInstance.close()
                 }
-                INSTANCE = null
-                INSTANCE_APP_CONTEXT = null
             }
+            INSTANCE = null
+            INSTANCE_APP_CONTEXT = null
         }
     }
 }

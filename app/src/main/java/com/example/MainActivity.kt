@@ -37,7 +37,8 @@ class MainActivity : FragmentActivity() {
                         themePreferences = app.themePreferences,
                         safBackupManager = app.safBackupManager,
                         backupAndRestoreManager = app.backupAndRestoreManager,
-                        localWifiSyncEngine = app.localWifiSyncEngine
+                        localWifiSyncEngine = app.localWifiSyncEngine,
+                        preserveUnlockedSession = databaseEpoch > 1
                     )
                 }
                 val billingFactory = remember(databaseEpoch) {
@@ -116,7 +117,8 @@ class MainActivity : FragmentActivity() {
                         selectedReceipt = selectedReceipt,
                         foundationViewModel = foundationViewModel,
                         billingViewModel = billingViewModel,
-                        backupAndRestoreManager = app.backupAndRestoreManager
+                        backupAndRestoreManager = app.backupAndRestoreManager,
+                        openBackupReportOnStart = databaseEpoch > 1 && app.backupAndRestoreManager.lastRestoreResult.value != null
                     )
                 }
             }

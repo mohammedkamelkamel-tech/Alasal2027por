@@ -599,12 +599,211 @@ class Phase4AccountsSyncBackupRestoreTest {
         assertEquals(RestoreFailureMessages.INSUFFICIENT_SPACE, spaceRes.message)
         assertLiveDataIntact()
 
-        // Failure F: Simulated failure right after file swap -> automatic rollback preserves live DB
+        // Failure F: Simulated failure right after file swap -> automatic rollback preserves live DB & reports technical error
         backupManager.simulatePostSwapFailureForTest = true
         val rollbackRes = backupManager.executeSafeRestoreFromFile(validBackup)
         backupManager.simulatePostSwapFailureForTest = false
         assertFalse(rollbackRes.succeeded)
         assertEquals(RestoreFailureMessages.RESTORE_FAILED_KEPT_CURRENT, rollbackRes.message)
+        assertNotNull("Expected technical error details to be captured on Step 16 failure", rollbackRes.technicalError)
+        assertTrue(rollbackRes.technicalError!!.contains("محاكاة فشل ما بعد الاستبدال"))
+        assertTrue(rollbackRes.steps.last().details.contains("السبب التقني"))
         assertLiveDataIntact()
+    }
+
+    @Test
+    fun `18-step restore reconciles earlier v6 backup without reading_half and mismatched room_master_table identity_hash, and survives Step 17 actor ID mismatch`(): Unit = runBlocking {
+        // 1. Seed realistic data and create a baseline backup
+        val s1 = repo.saveSubscriber(
+            SubscriberInput(
+                subscriberCode = "V6-COMPAT-01",
+                fullName = "سالم اليماني",
+                phoneNumber = "774444444",
+                meterNumber = "MTR-V6-1",
+                meterSealNumber = "SL-V6",
+                address = "حي العسل الشرقي",
+                subscriptionType = "منزلي",
+                customKwhPrice = 0.50,
+                subscriptionDate = 1000L,
+                isActive = true,
+                initialMeterReading = 10.0
+            )
+        ).getOrThrow()
+
+        val r1 = billingRepo.saveMeterReading(
+            MeterReadingInput(
+                subscriberId = s1,
+                billingPeriod = "2027-06",
+                readingHalf = 1,
+                currentReading = 60.0,
+                readingDate = 1812000000000L // early June
+            )
+        ).getOrThrow()
+        val inv1 = billingRepo.issueInvoiceForReading(r1).getOrThrow() // 50 * 0.5 = 25.0
+        billingRepo.recordInvoicePayment(inv1, amountPaid = 10.0).getOrThrow() // 15.0 remaining
+
+        val r2 = billingRepo.saveMeterReading(
+            MeterReadingInput(
+                subscriberId = s1,
+                billingPeriod = "2027-06",
+                readingHalf = 2,
+                currentReading = 110.0,
+                readingDate = 1812100000000L // same half day to verify duplicate-half resolution too
+            )
+        ).getOrThrow()
+        assertTrue(r2 > 0L)
+
+        val baselineBackup = File(backupManager.createBackup("MANUAL").getOrThrow().absolutePath)
+
+        // 2. Transform the extracted SQLite DB into an "earlier v6" variant:
+        //    - user_version = 6
+        //    - meter_readings WITHOUT reading_half column & WITH legacy index
+        //    - room_master_table.identity_hash = stale old v6 hash!
+        val extractedDb = File(context.cacheDir, "legacy_v6_variant.db")
+        val legacyZip = File(context.cacheDir, "legacy_v6_variant.alasalbak")
+        try {
+            val originalManifestJson: org.json.JSONObject
+            ZipFile(baselineBackup).use { zf ->
+                originalManifestJson = org.json.JSONObject(
+                    zf.getInputStream(zf.getEntry("manifest.json")).bufferedReader(Charsets.UTF_8).readText()
+                )
+                zf.getInputStream(zf.getEntry("alasal_2027.db")).use { inp ->
+                    FileOutputStream(extractedDb).use { out -> inp.copyTo(out) }
+                }
+            }
+
+            SQLiteDatabase.openDatabase(extractedDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE).use { sqlDb ->
+                sqlDb.execSQL("PRAGMA foreign_keys = OFF")
+                sqlDb.beginTransaction()
+                try {
+                    sqlDb.execSQL(
+                        """
+                        CREATE TABLE meter_readings_old_v6 (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE RESTRICT,
+                            billing_period TEXT NOT NULL,
+                            previous_reading REAL NOT NULL,
+                            current_reading REAL NOT NULL,
+                            consumed_kwh REAL NOT NULL,
+                            recorded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                            reading_date INTEGER NOT NULL,
+                            photo_uri TEXT,
+                            is_low_reading_override INTEGER NOT NULL DEFAULT 0,
+                            override_reason TEXT NOT NULL DEFAULT '',
+                            notes TEXT NOT NULL DEFAULT ''
+                        )
+                        """.trimIndent()
+                    )
+                    sqlDb.execSQL(
+                        """
+                        INSERT INTO meter_readings_old_v6 (
+                            id, subscriber_id, billing_period, previous_reading, current_reading,
+                            consumed_kwh, recorded_by_user_id, reading_date, photo_uri,
+                            is_low_reading_override, override_reason, notes
+                        )
+                        SELECT
+                            id, subscriber_id, billing_period, previous_reading, current_reading,
+                            consumed_kwh, recorded_by_user_id, reading_date, photo_uri,
+                            is_low_reading_override, override_reason, notes
+                        FROM meter_readings
+                        """.trimIndent()
+                    )
+                    sqlDb.execSQL("DROP TABLE meter_readings")
+                    sqlDb.execSQL("ALTER TABLE meter_readings_old_v6 RENAME TO meter_readings")
+                    sqlDb.execSQL("CREATE INDEX index_meter_readings_subscriber_id_billing_period ON meter_readings(subscriber_id, billing_period)")
+                    sqlDb.execSQL("CREATE INDEX index_meter_readings_recorded_by_user_id ON meter_readings(recorded_by_user_id)")
+                    sqlDb.execSQL("CREATE INDEX index_meter_readings_reading_date ON meter_readings(reading_date)")
+                    // Corrupt room_master_table hash to simulate an earlier compiled v6 APK
+                    sqlDb.execSQL(
+                        "INSERT OR REPLACE INTO room_master_table (id, identity_hash) VALUES (42, 'stale_old_v6_hash_mismatch_9999')"
+                    )
+                    sqlDb.version = 6
+                    sqlDb.setTransactionSuccessful()
+                } finally {
+                    sqlDb.endTransaction()
+                    sqlDb.execSQL("PRAGMA foreign_keys = ON")
+                }
+            }
+
+            // Recompute SHA-256 and package as a valid .alasalbak ZIP
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            extractedDb.inputStream().use { fis ->
+                val buf = ByteArray(8192)
+                var n = fis.read(buf)
+                while (n != -1) {
+                    digest.update(buf, 0, n)
+                    n = fis.read(buf)
+                }
+            }
+            val newSha = digest.digest().joinToString("") { "%02x".format(it) }
+            originalManifestJson.put("dbSha256", newSha)
+
+            ZipOutputStream(FileOutputStream(legacyZip)).use { zos ->
+                zos.putNextEntry(ZipEntry("manifest.json"))
+                zos.write(originalManifestJson.toString(2).toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+                zos.putNextEntry(ZipEntry("alasal_2027.db"))
+                extractedDb.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+
+            // 3. Add a brand new Admin user on the live DB who does NOT exist inside the backup DB
+            //    (tests Step 17 FK safety for FinancialAuditLogEntity.actorUserId)
+            val newAdminId = repo.createUserAccount(
+                username = "admin_after_backup",
+                fullName = "مدير جديد بعد النسخ",
+                roleCode = StationRoles.ADMIN,
+                password = "newpass2027",
+                isActive = true
+            ).getOrThrow()
+
+            // Also mutate live DB with an extra subscriber so we can verify full state restoration
+            repo.saveSubscriber(
+                SubscriberInput(
+                    subscriberCode = "MUTATED-TEMP",
+                    fullName = "سجل مؤقت سيستبدل",
+                    phoneNumber = "770000111",
+                    meterNumber = "MTR-MUT-1",
+                    meterSealNumber = "",
+                    address = "",
+                    subscriptionType = "منزلي",
+                    customKwhPrice = 0.50,
+                    subscriptionDate = 2000L,
+                    isActive = true
+                )
+            ).getOrThrow()
+
+            // 4. Verify & Execute full 18-step restore using the actor ID absent from the backup DB!
+            val verification = backupManager.verifyBackupFile(legacyZip)
+            assertTrue("Expected earlier v6 backup to verify cleanly: ${verification.errorMessage}", verification.isValid)
+
+            val res = backupManager.executeSafeRestoreFromFile(legacyZip, actorUserId = newAdminId)
+            assertTrue(
+                "Expected earlier v6 restore to succeed all 18 steps, got: ${res.message} | tech=${res.technicalError} | steps=${res.steps}",
+                res.succeeded
+            )
+            assertEquals(18, res.steps.size)
+            assertTrue(res.steps.all { it.succeeded })
+            assertEquals(1, res.restoredSubscribersCount)
+            assertEquals(1, res.restoredInvoicesCount)
+            assertEquals(1, res.restoredCollectionsCount)
+
+            // 5. Verify reopened Room DB reads 100% of restored entities cleanly
+            db = AlasalDatabase.getInstance(context)
+            val subs = db.subscriberDao().getAllSubscribersOnce()
+            assertEquals(1, subs.size)
+            assertEquals("V6-COMPAT-01", subs.first().subscriberCode)
+            assertEquals(10.0, subs.first().initialMeterReading, 0.001)
+            assertEquals(15.0, subs.first().currentArrearsAmount, 0.01)
+
+            val readings = db.billingDao().getAllMeterReadingsOnce()
+            assertEquals(2, readings.size)
+            assertEquals(setOf(1, 2), readings.map { it.readingHalf }.toSet())
+            assertEquals(1, db.billingDao().getAllInvoicesOnce().size)
+            assertEquals(1, db.collectionDao().getAllCollectionsOnce().size)
+        } finally {
+            extractedDb.delete()
+            legacyZip.delete()
+        }
     }
 }

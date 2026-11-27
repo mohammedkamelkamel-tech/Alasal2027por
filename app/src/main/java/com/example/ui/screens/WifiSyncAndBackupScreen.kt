@@ -112,6 +112,8 @@ fun WifiSyncAndBackupScreen(
     onSaveCustomBackupFolder: (Uri) -> Unit,
     onExecuteSafeRestoreFromFile: (File) -> Unit,
     onExecuteSafeRestoreFromUri: (Uri) -> Unit,
+    initialTab: Int = 0,
+    onOpenDashboard: () -> Unit = onNavigateBack,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -121,7 +123,7 @@ fun WifiSyncAndBackupScreen(
     val canManageSync = StationPermission.MANAGE_SYNC.key in effectivePermissions
     val canManageBackups = StationPermission.EXPORT_BACKUP.key in effectivePermissions
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Wi-Fi Sync, 1 = Backup & Restore
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab) } // 0 = Wi-Fi Sync, 1 = Backup & Restore
     var targetIpInput by remember { mutableStateOf("192.168.1.") }
     var targetPortInput by remember { mutableStateOf(LocalWifiSyncEngine.DEFAULT_PORT.toString()) }
 
@@ -566,11 +568,47 @@ fun WifiSyncAndBackupScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = if (lastRestoreResult.succeeded) alasalColors.creditGreen else alasalColors.arrearsRed
                                 )
+                                if (!lastRestoreResult.succeeded && !lastRestoreResult.technicalError.isNullOrBlank()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                                        shape = MaterialTheme.shapes.small,
+                                        modifier = Modifier.fillMaxWidth().testTag("restore_technical_error_box")
+                                    ) {
+                                        Text(
+                                            text = "التفاصيل التقنية للاستثناء:\n${lastRestoreResult.technicalError}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(10.dp)
+                                        )
+                                    }
+                                }
                                 lastRestoreResult.steps.forEach { st ->
                                     Text(
                                         text = "${st.stepNumber}. ${if (st.succeeded) "✓" else "✕"} ${st.title} — ${st.details}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
+                                }
+                                if (lastRestoreResult.succeeded) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = onOpenDashboard,
+                                            modifier = Modifier.weight(1f).height(48.dp).testTag("open_dashboard_after_restore_button")
+                                        ) {
+                                            Text("عرض البيانات المستعادة", maxLines = 1)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { com.example.AlasalApplication.restartAppCleanly(context) },
+                                            modifier = Modifier.weight(1f).height(48.dp).testTag("restart_app_after_restore_button")
+                                        ) {
+                                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.size(4.dp))
+                                            Text("إعادة تشغيل التطبيق", maxLines = 1)
+                                        }
+                                    }
                                 }
                             }
                         }

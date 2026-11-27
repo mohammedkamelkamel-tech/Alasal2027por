@@ -171,6 +171,7 @@ fun AlasalAppShell(
     foundationViewModel: FoundationViewModel,
     billingViewModel: BillingViewModel,
     backupAndRestoreManager: BackupAndRestoreManager? = null,
+    openBackupReportOnStart: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
@@ -323,6 +324,14 @@ fun AlasalAppShell(
 
                         is FoundationUiState.Ready -> {
                             val subMap = uiState.subscribers.associateBy { it.id }
+
+                            LaunchedEffect(openBackupReportOnStart) {
+                                if (openBackupReportOnStart) {
+                                    navController.navigate(AlasalRoutes.ROUTE_SYNC_BACKUP) {
+                                        launchSingleTop = true
+                                    }
+                                }
+                            }
 
                             NavHost(
                                 navController = navController,
@@ -627,7 +636,11 @@ fun AlasalAppShell(
                                         backupAndRestoreManager = backupAndRestoreManager,
                                         feedback = foundationFeedback,
                                         onDismissFeedback = foundationViewModel::clearFeedback,
-                                        onNavigateBack = { navController.popBackStack() },
+                                        onNavigateBack = {
+                                            if (!navController.popBackStack()) {
+                                                navigateToRoute(AlasalRoutes.ROUTE_DASHBOARD)
+                                            }
+                                        },
                                         onStartHosting = { foundationViewModel.startWifiSyncHosting() },
                                         onStopHosting = foundationViewModel::stopWifiSyncHosting,
                                         onStartDiscovery = foundationViewModel::startWifiPeerDiscovery,
@@ -651,7 +664,9 @@ fun AlasalAppShell(
                                         },
                                         onExecuteSafeRestoreFromUri = { uri ->
                                             foundationViewModel.executeSafeRestoreFromUri(uri)
-                                        }
+                                        },
+                                        initialTab = if (openBackupReportOnStart) 1 else 0,
+                                        onOpenDashboard = { navigateToRoute(AlasalRoutes.ROUTE_DASHBOARD) }
                                     )
                                 }
 

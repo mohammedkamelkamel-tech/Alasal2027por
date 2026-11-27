@@ -6,8 +6,10 @@ import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.room.Room
+import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.sqlite.db.SupportSQLiteOpenHelper
@@ -84,7 +86,8 @@ data class RestoreExecutionResult(
     val preRestoreBackupPath: String? = null,
     val restoredSubscribersCount: Int = 0,
     val restoredInvoicesCount: Int = 0,
-    val restoredCollectionsCount: Int = 0
+    val restoredCollectionsCount: Int = 0,
+    val technicalError: String? = null
 )
 
 class BackupAndRestoreManager(
@@ -94,6 +97,7 @@ class BackupAndRestoreManager(
     private val onReloadApplicationDependencies: () -> Unit = {}
 ) {
     companion object {
+        private const val TAG = "AlasalRestore"
         private const val BACKUP_EXTENSION = ".alasalbak"
         private const val ENTRY_DB = "alasal_2027.db"
         private const val ENTRY_MANIFEST = "manifest.json"
@@ -399,16 +403,28 @@ class BackupAndRestoreManager(
         val stagingDir = File(context.cacheDir, "restore_staging_${UUID.randomUUID()}").apply { mkdirs() }
         val liveDbFile = context.getDatabasePath(AlasalDatabase.DATABASE_NAME)
         val rollbackFile = File(liveDbFile.parentFile, "${AlasalDatabase.DATABASE_NAME}.rollback")
+        val incomingFile = File(liveDbFile.parentFile, "${AlasalDatabase.DATABASE_NAME}.incoming")
         var preRestorePath: String? = null
         var swapped = false
 
-        fun fail(stepNo: Int, title: String, exactMessage: String): RestoreExecutionResult {
-            steps.add(RestoreStepRecord(stepNo, title, false, exactMessage))
+        fun fail(
+            stepNo: Int,
+            title: String,
+            exactMessage: String,
+            technicalDetail: String? = null
+        ): RestoreExecutionResult {
+            val stepDetails = if (!technicalDetail.isNullOrBlank()) {
+                "$exactMessage — السبب التقني: $technicalDetail"
+            } else {
+                exactMessage
+            }
+            steps.add(RestoreStepRecord(stepNo, title, false, stepDetails))
             val result = RestoreExecutionResult(
                 succeeded = false,
                 message = exactMessage,
                 steps = steps.toList(),
-                preRestoreBackupPath = preRestorePath
+                preRestoreBackupPath = preRestorePath,
+                technicalError = technicalDetail
             )
             _lastRestoreResult.value = result
             return result
@@ -419,9 +435,17 @@ class BackupAndRestoreManager(
             val actor = try {
                 repository.verifyPermission(actorUserId, StationPermission.EXPORT_BACKUP.key)
             } catch (sec: Exception) {
-                return@withContext fail(1, "التحقق من صلاحية الاستعادة", sec.message ?: "غير مصرح بالاستعادة")
+                return@withContext fail(
+                    1,
+                    "التحقق من صلاحية الاستعادة",
+                    sec.message ?: "غير مصرح بالاستعادة",
+                    formatTechnicalException(sec)
+                )
             }
             steps.add(RestoreStepRecord(1, "التحقق من صلاحية المستخدم", true, "تم التحقق: ${actor.fullName}"))
+
+            // Capture current compiled Room identity_hash while live DB is still open
+            val expectedIdentityHash = readExpectedRoomIdentityHash()
 
             // Step 2: Check source file readability
             if (!sourceFile.exists() || !sourceFile.canRead() || sourceFile.length() == 0L) {
@@ -470,16 +494,36 @@ class BackupAndRestoreManager(
             }
             steps.add(RestoreStepRecord(7, "فحص إصدار قاعدة البيانات", true, "إصدار متوافق: v$detectedVersion"))
 
-            // Step 8: Upgrade staged older database (v1..v3 -> v4) inside temp staging before touching live DB
+            // Step 8: Upgrade older versions (v1..v5 -> v6) AND reconcile v6 schema variants & Room identity_hash in isolation
             if (detectedVersion < AlasalDatabase.CURRENT_VERSION) {
-                val upgraded = upgradeStagedDatabaseToCurrent(stagedDb, detectedVersion)
-                if (!upgraded) {
-                    return@withContext fail(8, "ترقية الإصدار السابق بالبيئة المعزولة", RestoreFailureMessages.DB_CHECK_FAILED)
+                val upgradeErr = upgradeStagedDatabaseToCurrent(stagedDb, detectedVersion)
+                if (upgradeErr != null) {
+                    return@withContext fail(
+                        8,
+                        "ترقية الإصدار السابق بالبيئة المعزولة",
+                        RestoreFailureMessages.DB_CHECK_FAILED,
+                        upgradeErr
+                    )
                 }
-                steps.add(RestoreStepRecord(8, "ترقية النسخة الأقدم للإصدار الحالي", true, "تمت الترقية من v$detectedVersion إلى v${AlasalDatabase.CURRENT_VERSION}"))
-            } else {
-                steps.add(RestoreStepRecord(8, "التحقق من تطابق إصدار المخطط", true, "الإصدار الحالي v${AlasalDatabase.CURRENT_VERSION}"))
             }
+            val reconcileOutcome = reconcileStagedV6SchemaAndIdentity(stagedDb, expectedIdentityHash)
+            if (!reconcileOutcome.succeeded) {
+                return@withContext fail(
+                    8,
+                    "مطابقة مخطط قاعدة البيانات وبصمة Room",
+                    RestoreFailureMessages.DB_CHECK_FAILED,
+                    reconcileOutcome.errorDetail
+                )
+            }
+            val step8Details = when {
+                detectedVersion < AlasalDatabase.CURRENT_VERSION ->
+                    "تمت الترقية من v$detectedVersion إلى v${AlasalDatabase.CURRENT_VERSION} ومطابقة بصمة Room"
+                reconcileOutcome.schemaAdjusted || reconcileOutcome.identitySynced ->
+                    "تمت مواءمة مخطط v${AlasalDatabase.CURRENT_VERSION} ومطابقة بصمة Room بنجاح"
+                else ->
+                    "الإصدار الحالي v${AlasalDatabase.CURRENT_VERSION} متطابق بالكامل"
+            }
+            steps.add(RestoreStepRecord(8, "التحقق من تطابق إصدار المخطط", true, step8Details))
 
             // Step 9: SQLite PRAGMA integrity_check on staged DB
             if (!checkSqliteIntegrity(stagedDb)) {
@@ -487,51 +531,86 @@ class BackupAndRestoreManager(
             }
             steps.add(RestoreStepRecord(9, "فحص سلامة SQLite (integrity_check)", true, "النتيجة: OK"))
 
-            // Step 10: Verify all 14 tables & foreign keys on staged DB
+            // Step 10: Verify all 14 tables, foreign keys, AND Room dry-run open on staged DB BEFORE touching live DB
             if (!checkTablesAndForeignKeys(stagedDb)) {
                 return@withContext fail(10, "فحص الجداول الـ14 والعلاقات المرجعية", RestoreFailureMessages.DB_CHECK_FAILED)
             }
-            steps.add(RestoreStepRecord(10, "فحص الجداول الـ14 والمفاتيح الأجنبية", true, "14/14 جدول سليم و0 أخطاء علاقات"))
+            val dryRunErr = verifyStagedDbWithRoom(stagedDb)
+            if (dryRunErr != null) {
+                return@withContext fail(
+                    10,
+                    "فحص الجداول الـ14 ومطابقة Room في البيئة المعزولة",
+                    RestoreFailureMessages.DB_CHECK_FAILED,
+                    dryRunErr
+                )
+            }
+            steps.add(RestoreStepRecord(10, "فحص الجداول الـ14 والمفاتيح الأجنبية", true, "14/14 جدول سليم ومطابق لـ Room مع 0 أخطاء علاقات"))
 
             // Step 11: Create mandatory pre-restore safety backup of current live DB
-            val preBackup = createBackup(backupType = "PRE_RESTORE", actorUserId = actor.id).getOrElse {
-                return@withContext fail(11, "إنشاء نسخة أمان قبل الاستعادة", RestoreFailureMessages.RESTORE_FAILED_KEPT_CURRENT)
+            val preBackup = createBackup(backupType = "PRE_RESTORE", actorUserId = actor.id).getOrElse { err ->
+                return@withContext fail(
+                    11,
+                    "إنشاء نسخة أمان قبل الاستعادة",
+                    RestoreFailureMessages.RESTORE_FAILED_KEPT_CURRENT,
+                    formatTechnicalException(err)
+                )
             }
             preRestorePath = preBackup.absolutePath
             steps.add(RestoreStepRecord(11, "إنشاء نسخة أمان قبل الاستعادة", true, preBackup.fileName))
 
-            // Step 12: Flush WAL & cleanly close Room Database singleton
-            AlasalDatabase.closeAndResetInstance()
+            // Step 12: Flush WAL & cleanly close Room Database singleton (and any active handle)
+            AlasalDatabase.closeAndResetInstance(extraInstance = this@BackupAndRestoreManager.database)
             steps.add(RestoreStepRecord(12, "تفريغ WAL وإغلاق اتصال Room", true, "تم إغلاق قاعدة البيانات بنظافة"))
 
-            // Step 13: Move current live DB safely to .rollback slot
+            // Step 13: Copy current live DB safely to .rollback slot with fsync
             liveDbFile.parentFile?.mkdirs()
             if (liveDbFile.exists()) {
                 rollbackFile.delete()
-                liveDbFile.copyTo(rollbackFile, overwrite = true)
+                copyFileWithSync(liveDbFile, rollbackFile)
             }
             steps.add(RestoreStepRecord(13, "تأمين نسخة التراجع الفورية", true, "تم حجز نسخة التراجع الآمن"))
 
             // Step 14: Clean stale SQLite sidecar files (-wal, -shm, -journal)
             deleteSqliteSidecarFiles(liveDbFile)
+            deleteSqliteSidecarFiles(stagedDb)
+            incomingFile.delete()
             steps.add(RestoreStepRecord(14, "حذف ملفات الحالة الجانبية (WAL/SHM/Journal)", true, "تم تنظيف الملفات الجانبية"))
 
-            // Step 15: Atomic replacement of live DB with staged verified DB
-            stagedDb.copyTo(liveDbFile, overwrite = true)
+            // Step 15: Safe atomic replacement of live DB with staged verified DB (unlink old inode + fsync)
+            copyFileWithSync(stagedDb, incomingFile)
+            if (liveDbFile.exists()) {
+                liveDbFile.delete()
+            }
+            val renamed = incomingFile.renameTo(liveDbFile)
+            if (!renamed) {
+                copyFileWithSync(incomingFile, liveDbFile)
+                incomingFile.delete()
+            }
+            deleteSqliteSidecarFiles(liveDbFile)
+            check(liveDbFile.exists() && liveDbFile.length() == stagedDb.length()) {
+                "عدم تطابق حجم الملف بعد النقل (المتوقع ${stagedDb.length()}، الفعلي ${liveDbFile.length()})"
+            }
             swapped = true
-            steps.add(RestoreStepRecord(15, "استبدال ملف قاعدة البيانات من النسخة المفحوصة", true, "تم النقل للمسار الأساسي"))
+            steps.add(RestoreStepRecord(15, "استبدال ملف قاعدة البيانات من النسخة المفحوصة", true, "تم النقل الآمن للمسار الأساسي"))
 
-            // Step 16: Reopen Room Database & verify restored counts and integrity
+            // Step 16: Reopen fresh Room Database singleton & verify restored counts, records, and integrity
             if (simulatePostSwapFailureForTest) {
                 error("محاكاة فشل ما بعد الاستبدال للتحقق من التراجع الآمن")
             }
 
-            val reopenedDb = AlasalDatabase.getInstance(context)
+            val reopenedDb = AlasalDatabase.reopenFreshInstance(context)
             val reopenCounts = reopenedDb.systemDao().getAllTableCountsOnce()
             reopenedDb.openHelper.writableDatabase.query("PRAGMA integrity_check").use { c ->
-                require(c.moveToFirst() && c.getString(0).equals("ok", ignoreCase = true)) {
-                    RestoreFailureMessages.DB_CHECK_FAILED
+                val ok = c.moveToFirst() && c.getString(0).equals("ok", ignoreCase = true)
+                check(ok) {
+                    "فشل فحص PRAGMA integrity_check بعد إعادة الفتح: ${if (c.moveToFirst()) c.getString(0) else "empty"}"
                 }
+            }
+            // Verify entity deserialization on live restored Room tables
+            val verifiedSubsCount = reopenedDb.subscriberDao().getAllSubscribersOnce().size
+            val verifiedInvoicesCount = reopenedDb.billingDao().getAllInvoicesOnce().size
+            check(verifiedSubsCount == reopenCounts.subscribersCount && verifiedInvoicesCount == reopenCounts.invoicesCount) {
+                "عدم تطابق أعداد السجلات بعد الفتح (المشتركين: $verifiedSubsCount/${reopenCounts.subscribersCount}، الفواتير: $verifiedInvoicesCount/${reopenCounts.invoicesCount})"
             }
             steps.add(
                 RestoreStepRecord(
@@ -542,20 +621,23 @@ class BackupAndRestoreManager(
                 )
             )
 
-            // Step 17: Update internal references, log audit entry, remove rollback file
+            // Step 17: Update internal references, log FK-safe audit entry, remove rollback file
             val reopenedRepo = AlasalRepository(reopenedDb)
             this@BackupAndRestoreManager.database = reopenedDb
             this@BackupAndRestoreManager.repository = reopenedRepo
+            val resolvedActor = reopenedDb.systemDao().getUserById(actor.id)
+                ?: reopenedDb.systemDao().getUserByUsername(actor.username)
             reopenedDb.systemDao().insertAuditLog(
                 FinancialAuditLogEntity(
-                    actorUserId = actor.id,
-                    actorNameSnapshot = actor.fullName,
+                    actorUserId = resolvedActor?.id,
+                    actorNameSnapshot = resolvedActor?.fullName ?: actor.fullName,
                     operationType = "RESTORE_18_STEPS_COMPLETED",
                     entityName = "backups",
                     detailsAr = "استعادة آمنة مكتملة (18 خطوة): ${reopenCounts.subscribersCount} مشترك، ${reopenCounts.invoicesCount} فاتورة، ${reopenCounts.collectionsCount} تحصيل"
                 )
             )
             rollbackFile.delete()
+            incomingFile.delete()
             steps.add(RestoreStepRecord(17, "تسجيل عملية الاستعادة وتنظيف الملفات المؤقتة", true, "تمت أرشفة التدقيق المالي وتنظيف المسار"))
 
             // Step 18: Reload application dependencies cleanly
@@ -575,21 +657,29 @@ class BackupAndRestoreManager(
             _lastRestoreResult.value = finalResult
             finalResult
         } catch (ex: Exception) {
+            val failStepNo = (steps.size + 1).coerceIn(1, 18)
+            val techDetail = formatTechnicalException(ex)
+            Log.e(TAG, "Safe restore failed at step $failStepNo: $techDetail", ex)
+
             if (swapped) {
                 runCatching {
-                    AlasalDatabase.closeAndResetInstance()
+                    AlasalDatabase.closeAndResetInstance(extraInstance = this@BackupAndRestoreManager.database)
                     deleteSqliteSidecarFiles(liveDbFile)
+                    incomingFile.delete()
                     if (rollbackFile.exists()) {
-                        rollbackFile.copyTo(liveDbFile, overwrite = true)
+                        if (liveDbFile.exists()) liveDbFile.delete()
+                        copyFileWithSync(rollbackFile, liveDbFile)
                         rollbackFile.delete()
                     }
-                    val recovered = AlasalDatabase.getInstance(context)
+                    deleteSqliteSidecarFiles(liveDbFile)
+                    val recovered = AlasalDatabase.reopenFreshInstance(context)
                     this@BackupAndRestoreManager.database = recovered
                     this@BackupAndRestoreManager.repository = AlasalRepository(recovered)
                     onReloadApplicationDependencies()
+                }.onFailure { rbEx ->
+                    Log.e(TAG, "Rollback recovery encountered error: ${formatTechnicalException(rbEx)}", rbEx)
                 }
             }
-            val failStepNo = (steps.size + 1).coerceIn(1, 18)
             val errMsg = when (ex.message) {
                 RestoreFailureMessages.CORRUPT_BACKUP,
                 RestoreFailureMessages.UNSUPPORTED_VERSION,
@@ -598,7 +688,7 @@ class BackupAndRestoreManager(
                 RestoreFailureMessages.INSUFFICIENT_SPACE -> ex.message!!
                 else -> RestoreFailureMessages.RESTORE_FAILED_KEPT_CURRENT
             }
-            fail(failStepNo, "التراجع الآمن عن الاستعادة", errMsg)
+            fail(failStepNo, "التراجع الآمن عن الاستعادة", errMsg, techDetail)
         } finally {
             stagingDir.deleteRecursively()
         }
@@ -636,10 +726,14 @@ class BackupAndRestoreManager(
         if (ver <= 0 || ver > AlasalDatabase.CURRENT_VERSION) {
             return BackupVerificationResult(isValid = false, errorMessage = RestoreFailureMessages.UNSUPPORTED_VERSION)
         }
-        if (ver < AlasalDatabase.CURRENT_VERSION && !upgradeStagedDatabaseToCurrent(dbFile, ver)) {
+        val expectedHash = readExpectedRoomIdentityHash()
+        if (ver < AlasalDatabase.CURRENT_VERSION && upgradeStagedDatabaseToCurrent(dbFile, ver) != null) {
             return BackupVerificationResult(isValid = false, errorMessage = RestoreFailureMessages.DB_CHECK_FAILED)
         }
-        if (!checkSqliteIntegrity(dbFile) || !checkTablesAndForeignKeys(dbFile)) {
+        if (!reconcileStagedV6SchemaAndIdentity(dbFile, expectedHash).succeeded) {
+            return BackupVerificationResult(isValid = false, errorMessage = RestoreFailureMessages.DB_CHECK_FAILED)
+        }
+        if (!checkSqliteIntegrity(dbFile) || !checkTablesAndForeignKeys(dbFile) || verifyStagedDbWithRoom(dbFile) != null) {
             return BackupVerificationResult(isValid = false, errorMessage = RestoreFailureMessages.DB_CHECK_FAILED)
         }
         return BackupVerificationResult(
@@ -820,8 +914,40 @@ class BackupAndRestoreManager(
         }.getOrDefault(0)
     }
 
-    private fun upgradeStagedDatabaseToCurrent(dbFile: File, startVersion: Int): Boolean {
+    private data class ReconcileOutcome(
+        val succeeded: Boolean,
+        val schemaAdjusted: Boolean = false,
+        val identitySynced: Boolean = false,
+        val errorDetail: String? = null
+    )
+
+    private fun readExpectedRoomIdentityHash(): String? {
+        // 1. Read directly from the currently open live Room DB if available
+        val fromLive = runCatching {
+            val db = database.openHelper.readableDatabase
+            db.query("SELECT identity_hash FROM room_master_table WHERE id = 42 LIMIT 1").use { c ->
+                if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+            }
+        }.getOrNull()
+        if (!fromLive.isNullOrBlank()) return fromLive
+
+        // 2. Fallback: read from an ephemeral in-memory AlasalDatabase compiled with the current schema
         return runCatching {
+            val memDb = Room.inMemoryDatabaseBuilder(context.applicationContext, AlasalDatabase::class.java).build()
+            try {
+                memDb.openHelper.writableDatabase
+                    .query("SELECT identity_hash FROM room_master_table WHERE id = 42 LIMIT 1")
+                    .use { c ->
+                        if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+                    }
+            } finally {
+                memDb.close()
+            }
+        }.getOrNull()
+    }
+
+    private fun upgradeStagedDatabaseToCurrent(dbFile: File, startVersion: Int): String? {
+        return try {
             val helper = FrameworkSQLiteOpenHelperFactory().create(
                 SupportSQLiteOpenHelper.Configuration.builder(context)
                     .name(dbFile.absolutePath)
@@ -857,8 +983,160 @@ class BackupAndRestoreManager(
                 wdb.query("PRAGMA wal_checkpoint(TRUNCATE)").use { c -> c.moveToFirst() }
             }
             deleteSqliteSidecarFiles(dbFile)
-            readSqliteUserVersion(dbFile) == AlasalDatabase.CURRENT_VERSION && startVersion < AlasalDatabase.CURRENT_VERSION
-        }.getOrDefault(false)
+            val upgradedVersion = readSqliteUserVersion(dbFile)
+            if (upgradedVersion == AlasalDatabase.CURRENT_VERSION && startVersion < AlasalDatabase.CURRENT_VERSION) {
+                null
+            } else {
+                "تعذر تحديث إصدار SQLite من v$startVersion إلى v${AlasalDatabase.CURRENT_VERSION} (الحالي: v$upgradedVersion)"
+            }
+        } catch (ex: Exception) {
+            formatTechnicalException(ex)
+        }
+    }
+
+    /**
+     * Reconciles any earlier v6 schema variant (e.g., backups created before reading_half or
+     * initial_meter_reading were unified into v6) and synchronizes room_master_table's identity_hash
+     * inside the isolated staging DB BEFORE touching the live database.
+     */
+    private fun reconcileStagedV6SchemaAndIdentity(
+        dbFile: File,
+        expectedIdentityHash: String?
+    ): ReconcileOutcome {
+        return try {
+            // Check whether core tables exist first (if not, let Step 10 report missing tables cleanly)
+            val existingTables = mutableSetOf<String>()
+            SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { ro ->
+                ro.rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null).use { c ->
+                    while (c.moveToNext()) existingTables.add(c.getString(0))
+                }
+            }
+            if (!existingTables.containsAll(REQUIRED_14_TABLES)) {
+                return ReconcileOutcome(succeeded = true, schemaAdjusted = false, identitySynced = false)
+            }
+
+            var schemaAdjusted = false
+            var identitySynced = false
+
+            val helper = FrameworkSQLiteOpenHelperFactory().create(
+                SupportSQLiteOpenHelper.Configuration.builder(context)
+                    .name(dbFile.absolutePath)
+                    .callback(object : SupportSQLiteOpenHelper.Callback(AlasalDatabase.CURRENT_VERSION) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {}
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                        override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                    })
+                    .build()
+            )
+            helper.use {
+                val wdb = it.writableDatabase
+                // Foreign keys MUST be disabled outside a transaction before any table rebuild/rename
+                wdb.execSQL("PRAGMA foreign_keys = OFF")
+                wdb.beginTransaction()
+                try {
+                    schemaAdjusted = AlasalDatabase.ensureV6SchemaCompatibility(wdb)
+
+                    if (!expectedIdentityHash.isNullOrBlank()) {
+                        wdb.execSQL(
+                            "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)"
+                        )
+                        val currentHash = wdb.query(
+                            "SELECT identity_hash FROM room_master_table WHERE id = 42 LIMIT 1"
+                        ).use { c ->
+                            if (c.moveToFirst()) c.getString(0) else null
+                        }
+                        if (currentHash != expectedIdentityHash) {
+                            wdb.execSQL(
+                                "INSERT OR REPLACE INTO room_master_table (id, identity_hash) VALUES (42, ?)",
+                                arrayOf<Any>(expectedIdentityHash)
+                            )
+                            identitySynced = true
+                        }
+                    }
+
+                    wdb.version = AlasalDatabase.CURRENT_VERSION
+                    wdb.setTransactionSuccessful()
+                } finally {
+                    wdb.endTransaction()
+                    wdb.execSQL("PRAGMA foreign_keys = ON")
+                }
+                wdb.query("PRAGMA wal_checkpoint(TRUNCATE)").use { c -> c.moveToFirst() }
+            }
+            deleteSqliteSidecarFiles(dbFile)
+            ReconcileOutcome(
+                succeeded = true,
+                schemaAdjusted = schemaAdjusted,
+                identitySynced = identitySynced
+            )
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to reconcile staged v6 schema: ${formatTechnicalException(ex)}", ex)
+            ReconcileOutcome(succeeded = false, errorDetail = formatTechnicalException(ex))
+        }
+    }
+
+    /**
+     * Opens the staged database through an isolated temporary Room instance BEFORE swapping the live file,
+     * guaranteeing Room identity_hash validation and entity queries will succeed at Step 16.
+     */
+    private suspend fun verifyStagedDbWithRoom(stagedDb: File): String? {
+        var tempRoom: AlasalDatabase? = null
+        return try {
+            tempRoom = Room.databaseBuilder(
+                context.applicationContext,
+                AlasalDatabase::class.java,
+                stagedDb.absolutePath
+            )
+                .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
+                .addMigrations(
+                    AlasalDatabase.MIGRATION_1_2,
+                    AlasalDatabase.MIGRATION_2_3,
+                    AlasalDatabase.MIGRATION_3_4,
+                    AlasalDatabase.MIGRATION_4_5,
+                    AlasalDatabase.MIGRATION_5_6
+                )
+                .build()
+            tempRoom.systemDao().getAllTableCountsOnce()
+            tempRoom.subscriberDao().getAllSubscribersOnce()
+            tempRoom.billingDao().getAllInvoicesOnce()
+            tempRoom.openHelper.writableDatabase.query("PRAGMA integrity_check").use { c ->
+                val ok = c.moveToFirst() && c.getString(0).equals("ok", ignoreCase = true)
+                check(ok) { "PRAGMA integrity_check returned non-ok during staging dry-run" }
+            }
+            flushWalCheckpoint(tempRoom)
+            null
+        } catch (ex: Exception) {
+            Log.e(TAG, "Staging Room dry-run verification failed: ${formatTechnicalException(ex)}", ex)
+            formatTechnicalException(ex)
+        } finally {
+            runCatching { tempRoom?.close() }
+            deleteSqliteSidecarFiles(stagedDb)
+        }
+    }
+
+    private fun copyFileWithSync(source: File, destination: File) {
+        destination.parentFile?.mkdirs()
+        FileInputStream(source).use { input ->
+            FileOutputStream(destination, false).use { output ->
+                val buffer = ByteArray(16 * 1024)
+                var read = input.read(buffer)
+                while (read != -1) {
+                    output.write(buffer, 0, read)
+                    read = input.read(buffer)
+                }
+                output.flush()
+                runCatching { output.fd.sync() }
+            }
+        }
+    }
+
+    private fun formatTechnicalException(ex: Throwable): String {
+        val base = "${ex::class.java.simpleName}: ${ex.message ?: "خطأ غير معروف"}"
+        val rootCause = generateSequence(ex.cause) { it.cause }.lastOrNull()
+        return if (rootCause != null && rootCause !== ex) {
+            "$base | السبب: ${rootCause::class.java.simpleName}: ${rootCause.message ?: "بدون تفاصيل"}"
+        } else {
+            base
+        }
     }
 
     private fun checkSqliteIntegrity(dbFile: File): Boolean {

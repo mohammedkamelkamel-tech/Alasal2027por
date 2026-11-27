@@ -1,6 +1,8 @@
 package com.example
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.work.Configuration
 import com.example.data.local.database.AlasalDatabase
@@ -128,5 +130,20 @@ class AlasalApplication : Application(), Configuration.Provider {
         localWifiSyncEngine.rebindRepositories(nextRepo, nextSync)
         backupAndRestoreManager.rebindDatabase(nextDb, nextRepo)
         _databaseEpoch.value = _databaseEpoch.value + 1
+    }
+
+    companion object {
+        /**
+         * Cleanly restarts the application task after a restore so all activities, ViewModels,
+         * and Room observers start fresh against the restored database file.
+         */
+        fun restartAppCleanly(context: Context) {
+            runCatching {
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                val component = launchIntent?.component ?: return
+                val restartIntent = Intent.makeRestartActivityTask(component)
+                context.startActivity(restartIntent)
+            }
+        }
     }
 }

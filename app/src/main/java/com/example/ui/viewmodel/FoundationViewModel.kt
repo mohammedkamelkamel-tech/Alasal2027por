@@ -74,7 +74,8 @@ class FoundationViewModel(
     private val themePreferences: ThemePreferencesRepository,
     private val safBackupManager: SafBackupManager,
     private val backupAndRestoreManager: BackupAndRestoreManager? = null,
-    private val localWifiSyncEngine: LocalWifiSyncEngine? = null
+    private val localWifiSyncEngine: LocalWifiSyncEngine? = null,
+    private val preserveUnlockedSession: Boolean = false
 ) : ViewModel() {
 
     val themeMode: StateFlow<AppThemeMode> = themePreferences.themeMode.stateIn(
@@ -115,7 +116,7 @@ class FoundationViewModel(
     val tariffPreviewItems: StateFlow<List<TariffPricePreviewItem>> =
         _tariffPreviewItems.asStateFlow()
 
-    private val _isAppLocked = MutableStateFlow(true)
+    private val _isAppLocked = MutableStateFlow(!preserveUnlockedSession)
     val isAppLocked: StateFlow<Boolean> = _isAppLocked.asStateFlow()
 
     private val _lastInteractionAtMs = MutableStateFlow(System.currentTimeMillis())
@@ -225,8 +226,18 @@ class FoundationViewModel(
             repository.ensureBaselineSeeded()
             backupAndRestoreManager?.refreshBackupsList()
             val prefs = themePreferences.getBackupAndSessionPrefsOnce()
-            if (!prefs.appLockEnabled) {
+            if (!prefs.appLockEnabled || preserveUnlockedSession) {
                 _isAppLocked.value = false
+            }
+            if (preserveUnlockedSession) {
+                backupAndRestoreManager?.lastRestoreResult?.value?.let { lastRes ->
+                    _feedback.value = if (lastRes.succeeded) {
+                        FeedbackMessage.Success(lastRes.message)
+                    } else {
+                        val detail = lastRes.technicalError?.let { "\n$it" }.orEmpty()
+                        FeedbackMessage.Failure("${lastRes.message}$detail")
+                    }
+                }
             }
         }
     }
@@ -719,7 +730,8 @@ class FoundationViewModel(
             _feedback.value = if (res.succeeded) {
                 FeedbackMessage.Success(res.message)
             } else {
-                FeedbackMessage.Failure(res.message)
+                val detail = res.technicalError?.let { " — $it" }.orEmpty()
+                FeedbackMessage.Failure("${res.message}$detail")
             }
             onCompleted(res)
         }
@@ -732,7 +744,8 @@ class FoundationViewModel(
             _feedback.value = if (res.succeeded) {
                 FeedbackMessage.Success(res.message)
             } else {
-                FeedbackMessage.Failure(res.message)
+                val detail = res.technicalError?.let { " — $it" }.orEmpty()
+                FeedbackMessage.Failure("${res.message}$detail")
             }
             onCompleted(res)
         }
@@ -907,7 +920,8 @@ class FoundationViewModel(
         private val themePreferences: ThemePreferencesRepository,
         private val safBackupManager: SafBackupManager,
         private val backupAndRestoreManager: BackupAndRestoreManager? = null,
-        private val localWifiSyncEngine: LocalWifiSyncEngine? = null
+        private val localWifiSyncEngine: LocalWifiSyncEngine? = null,
+        private val preserveUnlockedSession: Boolean = false
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -916,7 +930,8 @@ class FoundationViewModel(
                 themePreferences = themePreferences,
                 safBackupManager = safBackupManager,
                 backupAndRestoreManager = backupAndRestoreManager,
-                localWifiSyncEngine = localWifiSyncEngine
+                localWifiSyncEngine = localWifiSyncEngine,
+                preserveUnlockedSession = preserveUnlockedSession
             ) as T
         }
     }
