@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,11 +61,15 @@ import com.example.domain.finance.FieldDebtFilter
 import com.example.domain.finance.ReportCategory
 import com.example.domain.finance.ReportFilter
 import com.example.domain.finance.StationReportGenerator
+import com.example.service.BluetoothThermalPrinterService
 import com.example.service.DocumentPdfAndThermalService
 import com.example.service.InvoiceShareAndPrintService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.ui.components.AvailableSubscribersDialog
 import com.example.ui.components.EmptyStateCard
+import com.example.ui.components.SubscriberPickerTriggerButton
 import com.example.ui.theme.LocalAlasalColors
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,9 +89,11 @@ fun ReportsAndStatementsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar")) }
     val shortDateFormat = remember { SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar")) }
+    val subscriberMap = remember(subscribers) { subscribers.associateBy { it.id } }
 
     var activeTab by remember(initialTabIndex) { mutableIntStateOf(initialTabIndex.coerceIn(0, 1)) }
     var areaFilterInput by remember { mutableStateOf("") }
@@ -96,6 +103,7 @@ fun ReportsAndStatementsScreen(
 
     var selectedCategory by remember { mutableStateOf(ReportCategory.ALL_INVOICES) }
     var selectedSubscriberId by remember { mutableStateOf<Long?>(null) }
+    var showSubscriberPickerDialog by remember { mutableStateOf(false) }
     var selectedCollectorId by remember { mutableStateOf<Long?>(null) }
     var selectedDatePreset by remember { mutableStateOf(DateRangePreset.ALL) }
     var customStartDaysAgo by remember { mutableIntStateOf(30) }
@@ -278,23 +286,12 @@ fun ReportsAndStatementsScreen(
 
                     if (subscribers.isNotEmpty()) {
                         Text("تصفية حسب المشترك:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            item {
-                                FilterChip(
-                                    selected = selectedSubscriberId == null,
-                                    onClick = { selectedSubscriberId = null },
-                                    label = { Text("الكل") }
-                                )
-                            }
-                            items(subscribers, key = { "rep_sub_${it.id}" }) { sub ->
-                                FilterChip(
-                                    selected = selectedSubscriberId == sub.id,
-                                    onClick = { selectedSubscriberId = sub.id },
-                                    label = { Text(sub.fullName) },
-                                    modifier = Modifier.testTag("report_sub_${sub.subscriberCode}")
-                                )
-                            }
-                        }
+                        SubscriberPickerTriggerButton(
+                            selectedSubscriber = selectedSubscriberId?.let { subscriberMap[it] },
+                            onClick = { showSubscriberPickerDialog = true },
+                            allSelectedLabel = "جميع المشتركين (${subscribers.size})",
+                            testTag = "reports_subscriber_picker_button"
+                        )
                     }
 
                     if (users.isNotEmpty()) {
@@ -344,23 +341,55 @@ fun ReportsAndStatementsScreen(
                             Spacer(modifier = Modifier.size(6.dp))
                             Text("تصدير ومشاركة PDF", maxLines = 1)
                         }
+                        val useDirectBluetooth = BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)
                         OutlinedButton(
                             onClick = {
-                                val file = DocumentPdfAndThermalService.generateReportA4Pdf(
-                                    context = context,
-                                    report = generatedReport,
-                                    stationAddress = notificationPrefs.stationAddress,
-                                    stationPhone = notificationPrefs.stationPhone
-                                )
-                                DocumentPdfAndThermalService.printPdfFile(context, file, generatedReport.title)
-                                pdfActionIsError = false
-                                pdfActionStatus = "تم إرسال التقرير للطباعة A4"
+                                if (useDirectBluetooth) {
+                                    scope.launch {
+                                        pdfActionIsError = false
+                                        pdfActionStatus = "جاري الإرسال المباشر إلى طابعة البلوتوث..."
+                                        val res = if (selectedCategory == ReportCategory.SUBSCRIBER_STATEMENT) {
+                                            val targetSub = selectedSubscriberId?.let { subscriberMap[it] } ?: subscribers.firstOrNull()
+                                            if (targetSub != null) {
+                                                val stmt = StationReportGenerator.buildSubscriberStatement(
+                                                    subscriber = targetSub,
+                                                    invoices = invoices,
+                                                    collectionsWithReceipts = collectionsWithReceipts,
+                                                    readings = readings,
+                                                    creditTransactions = creditTransactions
+                                                )
+                                                BluetoothThermalPrinterService.printStatementDirect(context, stmt, notificationPrefs)
+                                            } else {
+                                                BluetoothThermalPrinterService.printReportDirect(context, generatedReport, notificationPrefs)
+                                            }
+                                        } else {
+                                            BluetoothThermalPrinterService.printReportDirect(context, generatedReport, notificationPrefs)
+                                        }
+                                        res.onSuccess { msg ->
+                                            pdfActionIsError = false
+                                            pdfActionStatus = msg
+                                        }.onFailure { err ->
+                                            pdfActionIsError = true
+                                            pdfActionStatus = err.message ?: "فشلت الطباعة المباشرة على طابعة البلوتوث."
+                                        }
+                                    }
+                                } else {
+                                    val file = DocumentPdfAndThermalService.generateReportA4Pdf(
+                                        context = context,
+                                        report = generatedReport,
+                                        stationAddress = notificationPrefs.stationAddress,
+                                        stationPhone = notificationPrefs.stationPhone
+                                    )
+                                    DocumentPdfAndThermalService.printPdfFile(context, file, generatedReport.title)
+                                    pdfActionIsError = false
+                                    pdfActionStatus = "تم إرسال التقرير للطباعة A4"
+                                }
                             },
                             modifier = Modifier.weight(1f).height(48.dp).testTag("report_print_pdf_button")
                         ) {
                             Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text("طباعة A4", maxLines = 1)
+                            Text(if (useDirectBluetooth) "طباعة مباشرة" else "طباعة A4", maxLines = 1)
                         }
                     }
 
@@ -752,5 +781,17 @@ fun ReportsAndStatementsScreen(
                 }
             }
         }
+    }
+
+    if (showSubscriberPickerDialog) {
+        AvailableSubscribersDialog(
+            subscribers = subscribers,
+            selectedSubscriberId = selectedSubscriberId,
+            onSelectSubscriber = { sub -> selectedSubscriberId = sub.id },
+            onDismiss = { showSubscriberPickerDialog = false },
+            allowAllOption = true,
+            allOptionTitle = "جميع المشتركين (الكل)",
+            onSelectAll = { selectedSubscriberId = null }
+        )
     }
 }

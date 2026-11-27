@@ -54,8 +54,10 @@ import com.example.data.local.entity.ReminderEntity
 import com.example.data.local.entity.SubscriberEntity
 import com.example.service.AlasalNotificationService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.ui.components.AvailableSubscribersDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.StatusFeedbackBanner
+import com.example.ui.components.SubscriberPickerTriggerButton
 import com.example.ui.theme.LocalAlasalColors
 import com.example.ui.viewmodel.FeedbackMessage
 import java.text.SimpleDateFormat
@@ -100,6 +102,7 @@ fun RemindersAndNotificationsScreen(
     }
 
     var selectedSubscriberId by remember { mutableStateOf<Long?>(null) }
+    var showSubscriberPickerDialog by remember { mutableStateOf(false) }
     var titleInput by remember { mutableStateOf("موعد قراءة عداد") }
     var notesInput by remember { mutableStateOf("") }
     var delayMillis by remember { mutableLongStateOf(3_600_000L) }
@@ -229,22 +232,12 @@ fun RemindersAndNotificationsScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text("جدولة موعد قراءة عداد", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            item {
-                                FilterChip(
-                                    selected = selectedSubscriberId == null,
-                                    onClick = { selectedSubscriberId = null },
-                                    label = { Text("جولة عامة لجميع المشتركين") }
-                                )
-                            }
-                            items(subscribers, key = { "rem_sub_${it.id}" }) { sub ->
-                                FilterChip(
-                                    selected = selectedSubscriberId == sub.id,
-                                    onClick = { selectedSubscriberId = sub.id },
-                                    label = { Text(sub.fullName) }
-                                )
-                            }
-                        }
+                        SubscriberPickerTriggerButton(
+                            selectedSubscriber = selectedSubscriberId?.let { subMap[it] },
+                            onClick = { showSubscriberPickerDialog = true },
+                            allSelectedLabel = "جولة عامة لجميع المشتركين (${subscribers.size})",
+                            testTag = "reminders_subscriber_picker_button"
+                        )
                         OutlinedTextField(
                             value = titleInput,
                             onValueChange = { titleInput = it },
@@ -395,6 +388,18 @@ fun RemindersAndNotificationsScreen(
                 }
             }
         }
+    }
+
+    if (showSubscriberPickerDialog) {
+        AvailableSubscribersDialog(
+            subscribers = subscribers,
+            selectedSubscriberId = selectedSubscriberId,
+            onSelectSubscriber = { sub -> selectedSubscriberId = sub.id },
+            onDismiss = { showSubscriberPickerDialog = false },
+            allowAllOption = true,
+            allOptionTitle = "جولة عامة لجميع المشتركين",
+            onSelectAll = { selectedSubscriberId = null }
+        )
     }
 }
 

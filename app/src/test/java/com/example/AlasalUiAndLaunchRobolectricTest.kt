@@ -120,8 +120,16 @@ class AlasalUiAndLaunchRobolectricTest {
         composeTestRule.onNodeWithTag("nav_item_readings").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("readings_screen").assertIsDisplayed()
-        // Select the subscriber created by this test; the screen otherwise defaults to the first subscriber.
-        composeTestRule.onNodeWithTag("reading_sub_chip_SUB-UI-1").performScrollTo().performClick()
+        // Select the subscriber created by this test via the unified AvailableSubscribersDialog picker.
+        composeTestRule.onNodeWithTag("reading_subscriber_picker_button").performClick()
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("subscriber_picker_search_input").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("subscriber_picker_search_input").performTextInput("SUB-UI-1")
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("subscriber_picker_item_SUB-UI-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("subscriber_picker_item_SUB-UI-1").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("reading_current_input").performTextInput("100")
         composeTestRule.onNodeWithTag("reading_save_and_invoice_button").performClick()

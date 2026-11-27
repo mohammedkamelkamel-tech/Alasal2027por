@@ -62,12 +62,15 @@ import com.example.data.local.entity.MeterReadingEntity
 import com.example.data.local.entity.SubscriberEntity
 import com.example.data.repository.MeterReadingInput
 import com.example.data.repository.MeterReadingUpdateInput
+import com.example.domain.finance.ConsumptionPeriodHelper
 import com.example.domain.finance.ConsumptionSummaryCalculator
 import com.example.domain.finance.FinancialCalculator
 import com.example.service.InvoiceShareAndPrintService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.ui.components.AvailableSubscribersDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.StatusFeedbackBanner
+import com.example.ui.components.SubscriberPickerTriggerButton
 import com.example.ui.theme.LocalAlasalColors
 import com.example.ui.viewmodel.FeedbackMessage
 import java.text.SimpleDateFormat
@@ -119,10 +122,17 @@ fun MeterReadingsScreen(
     var overrideReason by remember { mutableStateOf("") }
     var editingReading by remember { mutableStateOf<MeterReadingEntity?>(null) }
     var deletingReading by remember { mutableStateOf<MeterReadingEntity?>(null) }
+    var showSubscriberPickerDialog by remember { mutableStateOf(false) }
 
     val baseReadingTime = remember { System.currentTimeMillis() }
     val readingDate = baseReadingTime - readingDaysOffset * 86_400_000L
-    val previousReadingDate = subscriberLatestReading?.readingDate ?: selectedSubscriber?.subscriptionDate ?: readingDate
+    val consumptionPeriodLabel = remember(selectedSubscriber, invoices, readingDate) {
+        ConsumptionPeriodHelper.formatReadingPeriodRange(
+            subscriber = selectedSubscriber,
+            allInvoices = invoices,
+            readingDateMillis = readingDate
+        )
+    }
     val periodKeyFormatter = remember { SimpleDateFormat("yyyy-MM", Locale.US) }
     val billingPeriod = periodKeyFormatter.format(Date(readingDate))
     val autoDetectedHalf = remember(readingDate) {
@@ -244,11 +254,17 @@ fun MeterReadingsScreen(
                             }
                             Button(
                                 onClick = {
+                                    val issuedPeriodLabel = ConsumptionPeriodHelper.formatInvoicePeriodRange(
+                                        invoice = lastIssuedInvoice,
+                                        subscriber = issuedSub,
+                                        allInvoices = invoices
+                                    )
                                     val warn = InvoiceShareAndPrintService.sendViaWhatsApp(
                                         context = context,
                                         invoice = lastIssuedInvoice,
                                         subscriber = issuedSub,
-                                        defaultCountryCode = notificationPrefs.defaultCountryCode
+                                        defaultCountryCode = notificationPrefs.defaultCountryCode,
+                                        periodLabel = issuedPeriodLabel
                                     )
                                     if (warn != null) {
                                         dispatchWarning = warn
@@ -300,23 +316,12 @@ fun MeterReadingsScreen(
                                 text = "اختيار المشترك:",
                                 style = MaterialTheme.typography.labelLarge
                             )
-                            LazyRow(
-                                modifier = Modifier.testTag("reading_sub_chips_row"),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(subscribers, key = { it.id }) { sub ->
-                                    FilterChip(
-                                        selected = sub.id == selectedSubscriberId,
-                                        onClick = {
-                                            selectedSubscriberId = sub.id
-                                            allowLowOverride = false
-                                            overrideReason = ""
-                                        },
-                                        label = { Text("${sub.fullName} (${sub.subscriberCode})") },
-                                        modifier = Modifier.testTag("reading_sub_chip_${sub.subscriberCode}")
-                                    )
-                                }
-                            }
+                            SubscriberPickerTriggerButton(
+                                selectedSubscriber = selectedSubscriber,
+                                onClick = { showSubscriberPickerDialog = true },
+                                placeholderText = "اختر المشترك من قائمة المشتركين المتاحين",
+                                testTag = "reading_subscriber_picker_button"
+                            )
 
                             if (selectedSubscriber != null) {
                                 Surface(
@@ -351,9 +356,10 @@ fun MeterReadingsScreen(
                                     modifier = Modifier.fillMaxWidth().testTag("reading_current_input")
                                 )
                                 Text(
-                                    text = "فترة الاستهلاك: من ${dateFormat.format(Date(previousReadingDate))} إلى ${dateFormat.format(Date(readingDate))}",
+                                    text = consumptionPeriodLabel,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = alasalColors.gold,
+                                    fontWeight = FontWeight.Bold,
                                     modifier = Modifier.fillMaxWidth().testTag("reading_period_range")
                                 )
                             }
@@ -771,6 +777,19 @@ fun MeterReadingsScreen(
                     Text("إلغاء")
                 }
             }
+        )
+    }
+
+    if (showSubscriberPickerDialog) {
+        AvailableSubscribersDialog(
+            subscribers = subscribers,
+            selectedSubscriberId = selectedSubscriberId,
+            onSelectSubscriber = { sub ->
+                selectedSubscriberId = sub.id
+                allowLowOverride = false
+                overrideReason = ""
+            },
+            onDismiss = { showSubscriberPickerDialog = false }
         )
     }
 }

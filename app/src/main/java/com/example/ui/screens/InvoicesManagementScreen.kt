@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -52,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,12 +70,18 @@ import com.example.data.local.entity.ReceiptEntity
 import com.example.data.local.entity.SubscriberEntity
 import com.example.data.local.entity.UserEntity
 import com.example.data.repository.InvoiceDetailBundle
+import com.example.domain.finance.ConsumptionPeriodHelper
+import com.example.service.BluetoothThermalPrinterService
+import com.example.service.DocumentPdfAndThermalService
 import com.example.service.InvoiceShareAndPrintService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.ui.components.AvailableSubscribersDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.StatusFeedbackBanner
+import com.example.ui.components.SubscriberPickerTriggerButton
 import com.example.ui.theme.LocalAlasalColors
 import com.example.ui.viewmodel.FeedbackMessage
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,24 +106,29 @@ fun InvoicesManagementScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd", Locale.forLanguageTag("ar")) }
 
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("ALL") }
     var dateWindowDays by remember { mutableIntStateOf(0) } // 0 = All, 7 = 7 days, 30 = 30 days
+    var selectedSubscriberFilterId by remember { mutableStateOf<Long?>(null) }
+    var showSubscriberPickerDialog by remember { mutableStateOf(false) }
     var selectedSubscriberForDetails by remember { mutableStateOf<SubscriberEntity?>(null) }
     var smsSummary by remember { mutableStateOf<String?>(null) }
+    var printFeedback by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var showBulkSmsConfirmation by remember { mutableStateOf(false) }
 
-
     val subscriberMap = remember(subscribers) { subscribers.associateBy { it.id } }
+    val selectedFilterSubscriber = selectedSubscriberFilterId?.let { subscriberMap[it] }
 
-    val filteredInvoices = remember(invoices, subscribers, searchQuery, statusFilter, dateWindowDays) {
+    val filteredInvoices = remember(invoices, subscribers, searchQuery, statusFilter, dateWindowDays, selectedSubscriberFilterId) {
         val q = searchQuery.trim()
         val cutoff = if (dateWindowDays > 0) System.currentTimeMillis() - dateWindowDays * 86_400_000L else 0L
         invoices
             .filter { inv ->
+                val matchesSubscriber = selectedSubscriberFilterId == null || inv.subscriberId == selectedSubscriberFilterId
                 val matchesStatus = statusFilter == "ALL" || inv.status == statusFilter
                 val matchesDate = cutoff == 0L || inv.issuedAt >= cutoff
                 val sub = subscriberMap[inv.subscriberId]
@@ -124,7 +138,7 @@ fun InvoicesManagementScreen(
                     (sub?.fullName?.contains(q, ignoreCase = true) == true) ||
                     (sub?.subscriberCode?.contains(q, ignoreCase = true) == true) ||
                     (sub?.phoneNumber?.contains(q, ignoreCase = true) == true)
-                matchesStatus && matchesDate && matchesSearch
+                matchesSubscriber && matchesStatus && matchesDate && matchesSearch
             }
             .sortedWith(compareByDescending<InvoiceEntity> { it.issuedAt }.thenByDescending { it.id })
     }
@@ -145,25 +159,95 @@ fun InvoicesManagementScreen(
         if (granted) dispatchBulkSms() else smsSummary = "لم تمنح التطبيق إذن إرسال الرسائل SMS."
     }
 
+    fun handleDirectOrSystemInvoicePrint(inv: InvoiceEntity, sub: SubscriberEntity?, periodLabel: String) {
+        if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+            scope.launch {
+                val res = BluetoothThermalPrinterService.printInvoiceDirect(
+                    context = context,
+                    invoice = inv,
+                    subscriber = sub,
+                    periodLabel = periodLabel,
+                    prefs = notificationPrefs
+                )
+                res.onSuccess { msg ->
+                    printFeedback = false to msg
+                }.onFailure { err ->
+                    val errMsg = err.message ?: "تعذر الطباعة المباشرة على طابعة البلوتوث."
+                    printFeedback = true to errMsg
+                    onFeedbackWarning(errMsg)
+                }
+            }
+        } else {
+            InvoiceShareAndPrintService.printInvoice(
+                context = context,
+                invoice = inv,
+                subscriber = sub,
+                thermalWidthMm = notificationPrefs.thermalPaperWidthMm,
+                periodLabel = periodLabel
+            )
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "ملفات المشتركين — اضغط على الاسم لعرض الحساب الكامل",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-        )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(subscribers, key = { it.id }) { subscriber ->
-                FilterChip(
-                    selected = selectedSubscriberForDetails?.id == subscriber.id,
-                    onClick = { selectedSubscriberForDetails = subscriber },
-                    label = { Text(subscriber.fullName, maxLines = 1) }
+        if (subscribers.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 800.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SubscriberPickerTriggerButton(
+                    selectedSubscriber = selectedFilterSubscriber,
+                    onClick = { showSubscriberPickerDialog = true },
+                    allSelectedLabel = "جميع المشتركين (${subscribers.size})",
+                    testTag = "invoices_subscriber_picker_button"
                 )
+                if (selectedFilterSubscriber != null) {
+                    OutlinedButton(
+                        onClick = { selectedSubscriberForDetails = selectedFilterSubscriber },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("invoices_view_subscriber_profile_button")
+                    ) {
+                        Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text("عرض ملف وحساب المشترك: ${selectedFilterSubscriber.fullName}")
+                    }
+                }
+            }
+        }
+        if (printFeedback != null) {
+            val (isErr, msg) = printFeedback!!
+            Surface(
+                color = if (isErr) alasalColors.arrearsContainer else alasalColors.creditContainer,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier
+                    .widthIn(max = 800.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .testTag("invoice_print_feedback_banner")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isErr) alasalColors.arrearsRed else alasalColors.creditGreen,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { printFeedback = null }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "إغلاق الرسالة", modifier = Modifier.size(16.dp))
+                    }
+                }
             }
         }
         if (feedback != null) {
@@ -262,6 +346,13 @@ fun InvoicesManagementScreen(
                 items(filteredInvoices, key = { it.id }) { inv ->
                     val sub = subscriberMap[inv.subscriberId]
                     val isPaid = inv.status == "PAID"
+                    val periodLabel = remember(inv.id, inv.issuedAt, sub?.subscriptionDate, invoices) {
+                        ConsumptionPeriodHelper.formatInvoicePeriodRange(
+                            invoice = inv,
+                            subscriber = sub,
+                            allInvoices = invoices
+                        )
+                    }
                     Card(
                         modifier = Modifier
                             .widthIn(max = 800.dp)
@@ -287,9 +378,11 @@ fun InvoicesManagementScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "الفترة: ${inv.billingPeriod} | الإصدار: ${dateFormat.format(Date(inv.issuedAt))}",
+                                        text = periodLabel,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = alasalColors.gold,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.testTag("invoice_period_${inv.invoiceNumber}")
                                     )
                                 }
                                 Surface(
@@ -344,13 +437,15 @@ fun InvoicesManagementScreen(
                                     Text("التفاصيل والسداد")
                                 }
                                 IconButton(
-                                    onClick = { InvoiceShareAndPrintService.printInvoice(context, inv, sub) },
-                                    modifier = Modifier.size(48.dp)
+                                    onClick = { handleDirectOrSystemInvoicePrint(inv, sub, periodLabel) },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("invoice_print_btn_${inv.invoiceNumber}")
                                 ) {
                                     Icon(Icons.Filled.Print, contentDescription = "طباعة الفاتورة")
                                 }
                                 IconButton(
-                                    onClick = { InvoiceShareAndPrintService.shareInvoiceText(context, inv, sub) },
+                                    onClick = { InvoiceShareAndPrintService.shareInvoiceText(context, inv, sub, periodLabel) },
                                     modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(Icons.Filled.Share, contentDescription = "مشاركة الفاتورة")
@@ -361,7 +456,8 @@ fun InvoicesManagementScreen(
                                             context = context,
                                             invoice = inv,
                                             subscriber = sub,
-                                            defaultCountryCode = notificationPrefs.defaultCountryCode
+                                            defaultCountryCode = notificationPrefs.defaultCountryCode,
+                                            periodLabel = periodLabel
                                         )
                                         if (warn != null) {
                                             onFeedbackWarning(warn)
@@ -435,13 +531,32 @@ fun InvoicesManagementScreen(
         )
     }
 
+    if (showSubscriberPickerDialog) {
+        AvailableSubscribersDialog(
+            subscribers = subscribers,
+            selectedSubscriberId = selectedSubscriberFilterId,
+            onSelectSubscriber = { sub -> selectedSubscriberFilterId = sub.id },
+            onDismiss = { showSubscriberPickerDialog = false },
+            allowAllOption = true,
+            allOptionTitle = "جميع المشتركين (الكل)",
+            onSelectAll = { selectedSubscriberFilterId = null }
+        )
+    }
+
     if (selectedInvoiceDetail != null) {
+        val detailSub = subscriberMap[selectedInvoiceDetail.invoice.subscriberId]
+        val detailPeriodLabel = ConsumptionPeriodHelper.formatInvoicePeriodRange(
+            invoice = selectedInvoiceDetail.invoice,
+            subscriber = detailSub,
+            allInvoices = invoices
+        )
         InvoiceDetailDialog(
             bundle = selectedInvoiceDetail,
-            subscriber = subscriberMap[selectedInvoiceDetail.invoice.subscriberId],
+            subscriber = detailSub,
+            periodLabel = detailPeriodLabel,
             users = users,
             collectionsWithReceipts = collectionsWithReceipts,
-            defaultCountryCode = notificationPrefs.defaultCountryCode,
+            notificationPrefs = notificationPrefs,
             onSelectReceipt = onSelectReceipt,
             onDismiss = onDismissDetail,
             onRecordPayment = onRecordPayment,
@@ -455,9 +570,10 @@ fun InvoicesManagementScreen(
 private fun InvoiceDetailDialog(
     bundle: InvoiceDetailBundle,
     subscriber: SubscriberEntity?,
+    periodLabel: String,
     users: List<UserEntity>,
     collectionsWithReceipts: List<CollectionWithReceipt>,
-    defaultCountryCode: String = "967",
+    notificationPrefs: NotificationAndPrintPrefs,
     onSelectReceipt: (ReceiptEntity) -> Unit,
     onDismiss: () -> Unit,
     onRecordPayment: (Long, Double, String, Long?, () -> Unit) -> Unit,
@@ -465,6 +581,7 @@ private fun InvoiceDetailDialog(
     onDeleteInvoice: (Long, () -> Unit) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     val inv = bundle.invoice
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar")) }
@@ -474,7 +591,8 @@ private fun InvoiceDetailDialog(
 
     var showPaymentDialog by remember { mutableStateOf(false) }
     var showRepriceDialog by remember { mutableStateOf(false) }
-    var dialogWhatsappWarning by remember(inv.id) { mutableStateOf<String?>(null) }
+    var dialogActionMessage by remember(inv.id) { mutableStateOf<String?>(null) }
+    var dialogActionIsError by remember(inv.id) { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -511,6 +629,13 @@ private fun InvoiceDetailDialog(
                 Text(
                     text = "المشترك: ${subscriber?.fullName ?: "-"} (${subscriber?.subscriberCode ?: "-"})",
                     style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = periodLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = alasalColors.gold,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag("invoice_detail_period_range")
                 )
                 Text(
                     text = "القراءة: من ${inv.previousReading} إلى ${inv.currentReading} | الاستهلاك: ${inv.consumedKwh} ك.و.س",
@@ -616,16 +741,16 @@ private fun InvoiceDetailDialog(
                     }
                 }
 
-                if (dialogWhatsappWarning != null) {
+                if (dialogActionMessage != null) {
                     Surface(
-                        color = alasalColors.arrearsContainer,
+                        color = if (dialogActionIsError) alasalColors.arrearsContainer else alasalColors.creditContainer,
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth().testTag("invoice_detail_whatsapp_warning")
                     ) {
                         Text(
-                            text = dialogWhatsappWarning!!,
+                            text = dialogActionMessage!!,
                             style = MaterialTheme.typography.labelMedium,
-                            color = alasalColors.arrearsRed,
+                            color = if (dialogActionIsError) alasalColors.arrearsRed else alasalColors.creditGreen,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(8.dp)
                         )
@@ -636,26 +761,100 @@ private fun InvoiceDetailDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { InvoiceShareAndPrintService.printInvoice(context, inv, subscriber) },
-                        modifier = Modifier.weight(1f).height(48.dp)
+                    Button(
+                        onClick = {
+                            if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+                                scope.launch {
+                                    val res = BluetoothThermalPrinterService.printInvoiceDirect(
+                                        context = context,
+                                        invoice = inv,
+                                        subscriber = subscriber,
+                                        periodLabel = periodLabel,
+                                        prefs = notificationPrefs
+                                    )
+                                    res.onSuccess { msg ->
+                                        dialogActionIsError = false
+                                        dialogActionMessage = msg
+                                    }.onFailure { err ->
+                                        dialogActionIsError = true
+                                        dialogActionMessage = err.message ?: "فشلت الطباعة المباشرة."
+                                    }
+                                }
+                            } else {
+                                InvoiceShareAndPrintService.printInvoice(
+                                    context = context,
+                                    invoice = inv,
+                                    subscriber = subscriber,
+                                    thermalWidthMm = notificationPrefs.thermalPaperWidthMm,
+                                    periodLabel = periodLabel
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("invoice_detail_print_button")
                     ) {
-                        Text("طباعة")
+                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("طباعة", maxLines = 1)
                     }
                     OutlinedButton(
-                        onClick = { InvoiceShareAndPrintService.shareInvoiceText(context, inv, subscriber) },
+                        onClick = {
+                            val pdfFile = DocumentPdfAndThermalService.generateInvoiceA4Pdf(
+                                context = context,
+                                invoice = inv,
+                                subscriber = subscriber,
+                                periodLabel = periodLabel,
+                                stationAddress = notificationPrefs.stationAddress,
+                                stationPhone = notificationPrefs.stationPhone
+                            )
+                            DocumentPdfAndThermalService.shareFile(
+                                context = context,
+                                file = pdfFile,
+                                mimeType = "application/pdf",
+                                chooserTitle = "تصدير ومشاركة الفاتورة PDF"
+                            )
+                            dialogActionIsError = false
+                            dialogActionMessage = "تم تصدير ملف الفاتورة PDF (${pdfFile.name})"
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("invoice_detail_pdf_button")
+                    ) {
+                        Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text("PDF", maxLines = 1)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { InvoiceShareAndPrintService.shareInvoiceText(context, inv, subscriber, periodLabel) },
                         modifier = Modifier.weight(1f).height(48.dp)
                     ) {
                         Text("مشاركة")
                     }
                     Button(
                         onClick = {
-                            dialogWhatsappWarning = InvoiceShareAndPrintService.sendViaWhatsApp(
+                            val warn = InvoiceShareAndPrintService.sendViaWhatsApp(
                                 context = context,
                                 invoice = inv,
                                 subscriber = subscriber,
-                                defaultCountryCode = defaultCountryCode
+                                defaultCountryCode = notificationPrefs.defaultCountryCode,
+                                periodLabel = periodLabel
                             )
+                            if (warn != null) {
+                                dialogActionIsError = true
+                                dialogActionMessage = warn
+                            } else {
+                                dialogActionIsError = false
+                                dialogActionMessage = null
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp).testTag("invoice_detail_whatsapp_button")
                     ) {

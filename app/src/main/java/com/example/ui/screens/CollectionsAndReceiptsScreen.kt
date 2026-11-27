@@ -50,6 +50,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,12 +71,16 @@ import com.example.data.local.entity.SubscriberEntity
 import com.example.data.local.entity.UserEntity
 import com.example.domain.finance.DateRangePreset
 import com.example.domain.finance.StationReportGenerator
+import com.example.service.BluetoothThermalPrinterService
 import com.example.service.DocumentPdfAndThermalService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.ui.components.AvailableSubscribersDialog
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.StatusFeedbackBanner
+import com.example.ui.components.SubscriberPickerTriggerButton
 import com.example.ui.theme.LocalAlasalColors
 import com.example.ui.viewmodel.FeedbackMessage
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -103,6 +108,8 @@ fun CollectionsAndReceiptsScreen(
     onDismissReceipt: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar")) }
     val subMap = remember(subscribers) { subscribers.associateBy { it.id } }
@@ -118,6 +125,10 @@ fun CollectionsAndReceiptsScreen(
     var amountInput by remember { mutableStateOf("") }
     var paymentMethod by remember { mutableStateOf("CASH") }
     var notesInput by remember { mutableStateOf("") }
+    var formSubscriberFilterId by remember { mutableStateOf<Long?>(null) }
+    var showFormSubscriberPicker by remember { mutableStateOf(false) }
+    var showHistorySubscriberPicker by remember { mutableStateOf(false) }
+    var quickPrintFeedback by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
 
     // Search & Filter states
     var searchQuery by remember { mutableStateOf("") }
@@ -125,13 +136,18 @@ fun CollectionsAndReceiptsScreen(
     var filterCollectorId by remember { mutableStateOf<Long?>(null) }
     var datePreset by remember { mutableStateOf(DateRangePreset.ALL) }
 
-    LaunchedEffect(activeInvoices) {
-        if (selectedInvoiceId == null && activeInvoices.isNotEmpty()) {
-            selectedInvoiceId = activeInvoices.first().id
-            amountInput = activeInvoices.first().remainingAmount.toString()
-        } else if (selectedInvoiceId != null && activeInvoices.none { it.id == selectedInvoiceId }) {
-            selectedInvoiceId = activeInvoices.firstOrNull()?.id
-            amountInput = activeInvoices.firstOrNull()?.remainingAmount?.toString() ?: ""
+    val visibleActiveInvoices = remember(activeInvoices, formSubscriberFilterId) {
+        if (formSubscriberFilterId == null) activeInvoices
+        else activeInvoices.filter { it.subscriberId == formSubscriberFilterId }
+    }
+
+    LaunchedEffect(visibleActiveInvoices) {
+        if (selectedInvoiceId == null && visibleActiveInvoices.isNotEmpty()) {
+            selectedInvoiceId = visibleActiveInvoices.first().id
+            amountInput = visibleActiveInvoices.first().remainingAmount.toString()
+        } else if (selectedInvoiceId != null && visibleActiveInvoices.none { it.id == selectedInvoiceId }) {
+            selectedInvoiceId = visibleActiveInvoices.firstOrNull()?.id
+            amountInput = visibleActiveInvoices.firstOrNull()?.remainingAmount?.toString() ?: ""
         }
     }
 
@@ -234,19 +250,35 @@ fun CollectionsAndReceiptsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
+                            Text("اختيار المشترك:", style = MaterialTheme.typography.labelLarge)
+                            SubscriberPickerTriggerButton(
+                                selectedSubscriber = formSubscriberFilterId?.let { subMap[it] },
+                                onClick = { showFormSubscriberPicker = true },
+                                allSelectedLabel = "جميع المشتركين المستحقين (${activeInvoices.size} فاتورة)",
+                                testTag = "collection_form_subscriber_picker_button"
+                            )
+
                             Text("اختر الفاتورة المستحقة:", style = MaterialTheme.typography.labelLarge)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(activeInvoices, key = { it.id }) { inv ->
-                                    val subName = subMap[inv.subscriberId]?.fullName ?: "-"
-                                    FilterChip(
-                                        selected = inv.id == selectedInvoiceId,
-                                        onClick = {
-                                            selectedInvoiceId = inv.id
-                                            amountInput = inv.remainingAmount.toString()
-                                        },
-                                        label = { Text("${inv.invoiceNumber} ($subName) • متبقي ${inv.remainingAmount}") },
-                                        modifier = Modifier.testTag("collection_inv_chip_${inv.invoiceNumber}")
-                                    )
+                            if (visibleActiveInvoices.isEmpty()) {
+                                Text(
+                                    text = "لا توجد فواتير نشطة مستحقة لهذا المشترك.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(visibleActiveInvoices, key = { it.id }) { inv ->
+                                        val subName = subMap[inv.subscriberId]?.fullName ?: "-"
+                                        FilterChip(
+                                            selected = inv.id == selectedInvoiceId,
+                                            onClick = {
+                                                selectedInvoiceId = inv.id
+                                                amountInput = inv.remainingAmount.toString()
+                                            },
+                                            label = { Text("${inv.invoiceNumber} ($subName) • متبقي ${inv.remainingAmount}") },
+                                            modifier = Modifier.testTag("collection_inv_chip_${inv.invoiceNumber}")
+                                        )
+                                    }
                                 }
                             }
 
@@ -392,22 +424,22 @@ fun CollectionsAndReceiptsScreen(
                         }
                     }
                     if (subscribers.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            item {
-                                FilterChip(
-                                    selected = filterSubscriberId == null,
-                                    onClick = { filterSubscriberId = null },
-                                    label = { Text("كل المشتركين") }
-                                )
-                            }
-                            items(subscribers, key = { "fs_${it.id}" }) { sub ->
-                                FilterChip(
-                                    selected = filterSubscriberId == sub.id,
-                                    onClick = { filterSubscriberId = sub.id },
-                                    label = { Text(sub.fullName) }
-                                )
-                            }
-                        }
+                        SubscriberPickerTriggerButton(
+                            selectedSubscriber = filterSubscriberId?.let { subMap[it] },
+                            onClick = { showHistorySubscriberPicker = true },
+                            allSelectedLabel = "تصفية حسب المشترك: الكل (${subscribers.size})",
+                            testTag = "collections_subscriber_picker_button"
+                        )
+                    }
+                    if (quickPrintFeedback != null) {
+                        val (isErr, msg) = quickPrintFeedback!!
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isErr) alasalColors.arrearsRed else alasalColors.creditGreen,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("collections_quick_print_feedback")
+                        )
                     }
                 }
             }
@@ -472,16 +504,58 @@ fun CollectionsAndReceiptsScreen(
                                 style = MaterialTheme.typography.bodySmall
                             )
                             if (rcp != null) {
-                                OutlinedButton(
-                                    onClick = { onSelectReceipt(rcp) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .testTag("open_receipt_btn_${rcp.receiptNumber}")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Filled.Receipt, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.size(6.dp))
-                                    Text("عرض وطباعة ومشاركة الإيصال")
+                                    OutlinedButton(
+                                        onClick = { onSelectReceipt(rcp) },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("open_receipt_btn_${rcp.receiptNumber}")
+                                    ) {
+                                        Icon(Icons.Filled.Receipt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.size(6.dp))
+                                        Text("عرض وطباعة ومشاركة الإيصال", maxLines = 1)
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+                                                scope.launch {
+                                                    val res = BluetoothThermalPrinterService.printReceiptDirect(
+                                                        context = context,
+                                                        receipt = rcp,
+                                                        prefs = notificationPrefs
+                                                    )
+                                                    res.onSuccess { msg ->
+                                                        quickPrintFeedback = false to msg
+                                                    }.onFailure { err ->
+                                                        quickPrintFeedback = true to (err.message ?: "تعذر الطباعة المباشرة للإيصال.")
+                                                    }
+                                                }
+                                            } else {
+                                                val file = DocumentPdfAndThermalService.generateThermalReceiptPdf(
+                                                    context = context,
+                                                    receipt = rcp,
+                                                    paperWidthMm = notificationPrefs.thermalPaperWidthMm,
+                                                    stationAddress = notificationPrefs.stationAddress
+                                                )
+                                                DocumentPdfAndThermalService.printPdfFile(
+                                                    context = context,
+                                                    pdfFile = file,
+                                                    jobName = "Alasal_Thermal_${rcp.receiptNumber}",
+                                                    thermalWidthMm = notificationPrefs.thermalPaperWidthMm
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("quick_print_receipt_${rcp.receiptNumber}")
+                                    ) {
+                                        Icon(Icons.Filled.Print, contentDescription = "طباعة الإيصال مباشرة")
+                                    }
                                 }
                             }
                         }
@@ -489,6 +563,34 @@ fun CollectionsAndReceiptsScreen(
                 }
             }
         }
+    }
+
+    if (showFormSubscriberPicker) {
+        val subscribersWithDueInvoices = remember(subscribers, activeInvoices) {
+            val dueIds = activeInvoices.map { it.subscriberId }.toSet()
+            subscribers.filter { it.id in dueIds }.ifEmpty { subscribers }
+        }
+        AvailableSubscribersDialog(
+            subscribers = subscribersWithDueInvoices,
+            selectedSubscriberId = formSubscriberFilterId,
+            onSelectSubscriber = { sub -> formSubscriberFilterId = sub.id },
+            onDismiss = { showFormSubscriberPicker = false },
+            allowAllOption = true,
+            allOptionTitle = "جميع المشتركين المستحقين",
+            onSelectAll = { formSubscriberFilterId = null }
+        )
+    }
+
+    if (showHistorySubscriberPicker) {
+        AvailableSubscribersDialog(
+            subscribers = subscribers,
+            selectedSubscriberId = filterSubscriberId,
+            onSelectSubscriber = { sub -> filterSubscriberId = sub.id },
+            onDismiss = { showHistorySubscriberPicker = false },
+            allowAllOption = true,
+            allOptionTitle = "جميع المشتركين (الكل)",
+            onSelectAll = { filterSubscriberId = null }
+        )
     }
 
     if (selectedReceipt != null) {
@@ -509,6 +611,7 @@ fun ReceiptDetailDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.forLanguageTag("ar")) }
     var thermalWidthMm by remember(prefs.thermalPaperWidthMm) { mutableIntStateOf(prefs.thermalPaperWidthMm) }
@@ -675,20 +778,40 @@ fun ReceiptDetailDialog(
                         }
                         Button(
                             onClick = {
-                                val file = DocumentPdfAndThermalService.generateThermalReceiptPdf(
-                                    context = context,
-                                    receipt = receipt,
-                                    paperWidthMm = thermalWidthMm,
-                                    stationAddress = prefs.stationAddress
-                                )
-                                DocumentPdfAndThermalService.printPdfFile(
-                                    context = context,
-                                    pdfFile = file,
-                                    jobName = "Alasal_Thermal_${thermalWidthMm}mm_${receipt.receiptNumber}",
-                                    thermalWidthMm = thermalWidthMm
-                                )
-                                actionFeedbackIsError = false
-                                actionFeedback = "تم تجهيز الطباعة الحرارية ${thermalWidthMm}mm"
+                                if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(prefs)) {
+                                    scope.launch {
+                                        actionFeedbackIsError = false
+                                        actionFeedback = "جاري الطباعة الحرارية المباشرة..."
+                                        val res = BluetoothThermalPrinterService.printReceiptDirect(
+                                            context = context,
+                                            receipt = receipt,
+                                            prefs = prefs,
+                                            paperWidthOverrideMm = thermalWidthMm
+                                        )
+                                        res.onSuccess { msg ->
+                                            actionFeedbackIsError = false
+                                            actionFeedback = msg
+                                        }.onFailure { err ->
+                                            actionFeedbackIsError = true
+                                            actionFeedback = err.message ?: "فشلت الطباعة المباشرة على طابعة البلوتوث."
+                                        }
+                                    }
+                                } else {
+                                    val file = DocumentPdfAndThermalService.generateThermalReceiptPdf(
+                                        context = context,
+                                        receipt = receipt,
+                                        paperWidthMm = thermalWidthMm,
+                                        stationAddress = prefs.stationAddress
+                                    )
+                                    DocumentPdfAndThermalService.printPdfFile(
+                                        context = context,
+                                        pdfFile = file,
+                                        jobName = "Alasal_Thermal_${thermalWidthMm}mm_${receipt.receiptNumber}",
+                                        thermalWidthMm = thermalWidthMm
+                                    )
+                                    actionFeedbackIsError = false
+                                    actionFeedback = "تم تجهيز الطباعة الحرارية ${thermalWidthMm}mm"
+                                }
                             },
                             modifier = Modifier.weight(1f).height(48.dp).testTag("receipt_print_thermal_button")
                         ) {

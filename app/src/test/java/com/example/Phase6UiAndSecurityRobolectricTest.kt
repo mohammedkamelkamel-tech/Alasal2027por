@@ -90,11 +90,18 @@ class Phase6UiAndSecurityRobolectricTest {
         // 3. Issue reading + invoice for SUB-P6-1 -> verify instant post-issue WhatsApp dispatch banner appears
         composeTestRule.onNodeWithTag("nav_item_readings").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {
-            composeTestRule.onAllNodesWithTag("reading_sub_chips_row").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("reading_subscriber_picker_button").fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithTag("reading_sub_chips_row")
-            .performScrollToNode(hasTestTag("reading_sub_chip_SUB-P6-1"))
-        composeTestRule.onNodeWithTag("reading_sub_chip_SUB-P6-1").performClick()
+        composeTestRule.onNodeWithTag("reading_subscriber_picker_button").performClick()
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("subscriber_picker_search_input").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("subscriber_picker_search_input").performTextInput("SUB-P6-1")
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("subscriber_picker_item_SUB-P6-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("subscriber_picker_item_SUB-P6-1").performClick()
+        composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("reading_current_input").performTextInput("120")
         composeTestRule.onNodeWithTag("reading_save_and_invoice_button").performClick()
         composeTestRule.waitUntil(timeoutMillis = 5_000) {

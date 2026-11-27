@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -18,12 +22,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BluetoothConnected
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material.icons.filled.Storage
@@ -31,33 +41,47 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.service.AppThemeMode
 import com.example.service.BackupAndSessionPrefs
+import com.example.service.BluetoothThermalPrinterService
 import com.example.service.NotificationAndPrintPrefs
+import com.example.service.PairedBluetoothPrinter
+import com.example.service.PrinterConnectionState
 import com.example.ui.components.StatusFeedbackBanner
 import com.example.ui.theme.LocalAlasalColors
 import com.example.ui.viewmodel.FeedbackMessage
 import com.example.ui.viewmodel.FoundationUiState
+import kotlinx.coroutines.launch
 
 @Composable
 fun SystemDiagnosticsScreen(
@@ -82,12 +106,125 @@ fun SystemDiagnosticsScreen(
     onNavigateToTotalConsumption: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val alasalColors = LocalAlasalColors.current
     var stationPhoneInput by remember(notificationPrefs.stationPhone) { mutableStateOf(notificationPrefs.stationPhone) }
     var stationAddressInput by remember(notificationPrefs.stationAddress) { mutableStateOf(notificationPrefs.stationAddress) }
     var countryCodeInput by remember(notificationPrefs.defaultCountryCode) { mutableStateOf(notificationPrefs.defaultCountryCode) }
-    var printerNameInput by remember(notificationPrefs.printerDeviceName) { mutableStateOf(notificationPrefs.printerDeviceName) }
-    var printerAddressInput by remember(notificationPrefs.printerDeviceAddress) { mutableStateOf(notificationPrefs.printerDeviceAddress) }
+
+    var showBluetoothPickerDialog by remember { mutableStateOf(false) }
+    var pairedPrinters by remember { mutableStateOf<List<PairedBluetoothPrinter>>(emptyList()) }
+    var printerConnectionState by remember { mutableStateOf(PrinterConnectionState.NOT_CONFIGURED) }
+    var isCheckingConnection by remember { mutableStateOf(false) }
+    var isPrintingTest by remember { mutableStateOf(false) }
+    var printerActionMessage by remember { mutableStateOf<String?>(null) }
+    var printerActionIsError by remember { mutableStateOf(false) }
+    var pendingActionAfterPermission by remember { mutableStateOf<String?>(null) }
+
+    fun loadPairedPrintersAndOpenDialog() {
+        val result = BluetoothThermalPrinterService.getPairedPrinters(context)
+        result.onSuccess { list ->
+            pairedPrinters = list
+            showBluetoothPickerDialog = true
+            printerActionMessage = if (list.isEmpty()) {
+                "لا توجد أجهزة بلوتوث مقترنة بالهاتف حالياً. قم بإقران الطابعة من إعدادات البلوتوث أولاً."
+            } else {
+                null
+            }
+            printerActionIsError = list.isEmpty()
+        }.onFailure { err ->
+            printerActionMessage = err.message ?: "تعذر جلب قائمة أجهزة البلوتوث المقترنة."
+            printerActionIsError = true
+        }
+    }
+
+    fun refreshConnectionStatus(mac: String = notificationPrefs.printerDeviceAddress) {
+        if (mac.isBlank() || notificationPrefs.printerConnectionType != "BLUETOOTH") {
+            printerConnectionState = PrinterConnectionState.NOT_CONFIGURED
+            return
+        }
+        scope.launch {
+            isCheckingConnection = true
+            printerConnectionState = BluetoothThermalPrinterService.checkPrinterConnection(context, mac)
+            isCheckingConnection = false
+        }
+    }
+
+    fun executeTestPrint() {
+        if (!BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+            printerActionIsError = true
+            printerActionMessage = "يرجى اختيار طابعة بلوتوث أولاً قبل إجراء الطباعة التجريبية."
+            return
+        }
+        scope.launch {
+            isPrintingTest = true
+            printerActionMessage = "جاري إرسال صفحة الاختبار إلى الطابعة الحرارية..."
+            printerActionIsError = false
+            val res = BluetoothThermalPrinterService.printTestPage(context, notificationPrefs)
+            res.onSuccess { msg ->
+                printerConnectionState = PrinterConnectionState.CONNECTED
+                printerActionIsError = false
+                printerActionMessage = msg
+            }.onFailure { err ->
+                printerConnectionState = PrinterConnectionState.DISCONNECTED
+                printerActionIsError = true
+                printerActionMessage = err.message ?: "فشلت الطباعة التجريبية."
+            }
+            isPrintingTest = false
+        }
+    }
+
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val allGranted = grants.values.all { it }
+        if (allGranted) {
+            when (pendingActionAfterPermission) {
+                "PICK" -> loadPairedPrintersAndOpenDialog()
+                "TEST_PRINT" -> executeTestPrint()
+                "CHECK" -> refreshConnectionStatus()
+            }
+        } else {
+            printerActionIsError = true
+            printerActionMessage = "لم يتم منح أذونات البلوتوث (BLUETOOTH_CONNECT / BLUETOOTH_SCAN)."
+            printerConnectionState = PrinterConnectionState.PERMISSION_REQUIRED
+        }
+        pendingActionAfterPermission = null
+    }
+
+    fun runWithBluetoothPermission(actionKey: String, onGranted: () -> Unit) {
+        if (BluetoothThermalPrinterService.hasBluetoothPermissions(context) ||
+            BluetoothThermalPrinterService.pairedPrintersProviderForTest != null
+        ) {
+            onGranted()
+        } else {
+            val required = BluetoothThermalPrinterService.requiredBluetoothPermissions()
+            if (required.isEmpty()) {
+                onGranted()
+            } else {
+                pendingActionAfterPermission = actionKey
+                bluetoothPermissionLauncher.launch(required)
+            }
+        }
+    }
+
+    LaunchedEffect(notificationPrefs.printerConnectionType, notificationPrefs.printerDeviceAddress) {
+        if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+            if (BluetoothThermalPrinterService.hasBluetoothPermissions(context) ||
+                BluetoothThermalPrinterService.connectionCheckerForTest != null
+            ) {
+                printerConnectionState = BluetoothThermalPrinterService.checkPrinterConnection(
+                    context,
+                    notificationPrefs.printerDeviceAddress
+                )
+            } else {
+                printerConnectionState = PrinterConnectionState.PERMISSION_REQUIRED
+            }
+        } else {
+            printerConnectionState = PrinterConnectionState.NOT_CONFIGURED
+        }
+    }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -230,82 +367,233 @@ fun SystemDiagnosticsScreen(
                                 )
                             }
 
-                            Text(
-                                text = "إعدادات الطباعة الحرارية وبيانات المؤسسة على الإيصال",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = notificationPrefs.thermalPaperWidthMm == 58,
-                                    onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = 58) } },
-                                    label = { Text("ورق حراري 58mm") }
-                                )
-                                FilterChip(
-                                    selected = notificationPrefs.thermalPaperWidthMm == 80,
-                                    onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = 80) } },
-                                    label = { Text("ورق حراري 80mm") }
-                                )
-                            }
-                            Text(
-                                text = "ضبط الطابعة",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "اختر طريقة الاتصال ومقاس الورق. بيانات الجهاز تحفظ هنا لاستخدامها في الفواتير والإيصالات.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("SYSTEM" to "طباعة أندرويد", "BLUETOOTH" to "Bluetooth", "WIFI" to "Wi-Fi", "USB" to "USB").forEach { (type, label) ->
-                                    FilterChip(
-                                        selected = notificationPrefs.printerConnectionType == type,
-                                        onClick = { onUpdateNotificationPrefs { it.copy(printerConnectionType = type) } },
-                                        label = { Text(label) }
+                            HorizontalDivider()
+
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bluetooth_printer_settings_card"),
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                                border = BorderStroke(1.dp, alasalColors.gold.copy(alpha = 0.65f))
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (printerConnectionState == PrinterConnectionState.CONNECTED) {
+                                                    Icons.Filled.BluetoothConnected
+                                                } else {
+                                                    Icons.Filled.Bluetooth
+                                                },
+                                                contentDescription = null,
+                                                tint = if (printerConnectionState == PrinterConnectionState.CONNECTED) {
+                                                    alasalColors.creditGreen
+                                                } else {
+                                                    MaterialTheme.colorScheme.primary
+                                                }
+                                            )
+                                            Text(
+                                                text = "إعدادات الطابعة الحرارية (Bluetooth Printer)",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        val isConnected = printerConnectionState == PrinterConnectionState.CONNECTED
+                                        val statusLabel = when (printerConnectionState) {
+                                            PrinterConnectionState.CONNECTED -> "متصل"
+                                            PrinterConnectionState.DISCONNECTED -> "غير متصل"
+                                            PrinterConnectionState.BLUETOOTH_DISABLED -> "البلوتوث مغلق"
+                                            PrinterConnectionState.PERMISSION_REQUIRED -> "يلزم الإذن"
+                                            PrinterConnectionState.NOT_CONFIGURED -> "غير متصل"
+                                        }
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = if (isConnected) alasalColors.creditContainer else alasalColors.arrearsContainer,
+                                            modifier = Modifier.testTag("bluetooth_printer_status_badge")
+                                        ) {
+                                            Text(
+                                                text = statusLabel,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isConnected) alasalColors.creditGreen else alasalColors.arrearsRed,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Text(
+                                        text = "اختر طابعة البلوتوث المقترنة لتفعيل الطباعة الحرارية الفورية المباشرة (ESC/POS) للفواتير والإيصالات وكشف الحساب بدون نافذة معاينة أندرويد.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(58 to "58mm", 80 to "80mm", 210 to "A4").forEach { (width, label) ->
-                                    FilterChip(
-                                        selected = notificationPrefs.thermalPaperWidthMm == width,
-                                        onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = width) } },
-                                        label = { Text(label) }
-                                    )
-                                }
-                            }
-                            OutlinedTextField(
-                                value = printerNameInput,
-                                onValueChange = { printerNameInput = it },
-                                label = { Text("اسم الطابعة المختارة") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedTextField(
-                                value = printerAddressInput,
-                                onValueChange = { printerAddressInput = it },
-                                label = { Text("عنوان الجهاز أو IP للطابعة (إن وجد)") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    onUpdateNotificationPrefs {
-                                        it.copy(
-                                            printerDeviceName = printerNameInput.trim(),
-                                            printerDeviceAddress = printerAddressInput.trim()
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(
+                                            selected = notificationPrefs.thermalPaperWidthMm == 58,
+                                            onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = 58) } },
+                                            label = { Text("ورق حراري 58mm") },
+                                            modifier = Modifier.testTag("printer_width_58_chip")
+                                        )
+                                        FilterChip(
+                                            selected = notificationPrefs.thermalPaperWidthMm != 58,
+                                            onClick = { onUpdateNotificationPrefs { it.copy(thermalPaperWidthMm = 80) } },
+                                            label = { Text("ورق حراري 80mm") },
+                                            modifier = Modifier.testTag("printer_width_80_chip")
                                         )
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth().height(44.dp).testTag("printer_settings_save_button")
-                            ) {
-                                Text("حفظ إعدادات الطابعة")
+
+                                    if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.surface,
+                                            border = BorderStroke(1.dp, alasalColors.cardBorder),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("saved_bluetooth_printer_info")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = notificationPrefs.printerDeviceName.ifBlank { "طابعة بلوتوث افتراضية" },
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "MAC: ${notificationPrefs.printerDeviceAddress}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        runWithBluetoothPermission("CHECK") {
+                                                            refreshConnectionStatus()
+                                                        }
+                                                    },
+                                                    enabled = !isCheckingConnection,
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .testTag("bluetooth_check_connection_button")
+                                                ) {
+                                                    if (isCheckingConnection) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                                    } else {
+                                                        Icon(Icons.Filled.Refresh, contentDescription = "فحص اتصال الطابعة")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Text(
+                                            text = "لا توجد طابعة بلوتوث افتراضية محددة بعد.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                runWithBluetoothPermission("PICK") {
+                                                    loadPairedPrintersAndOpenDialog()
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(48.dp)
+                                                .testTag("select_bluetooth_printer_button")
+                                        ) {
+                                            Icon(Icons.Filled.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.size(6.dp))
+                                            Text("اختيار طابعة بلوتوث", maxLines = 1)
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                runWithBluetoothPermission("TEST_PRINT") {
+                                                    executeTestPrint()
+                                                }
+                                            },
+                                            enabled = !isPrintingTest &&
+                                                BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(48.dp)
+                                                .testTag("bluetooth_test_print_button")
+                                        ) {
+                                            if (isPrintingTest) {
+                                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            } else {
+                                                Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            }
+                                            Spacer(modifier = Modifier.size(6.dp))
+                                            Text("طباعة تجريبية", maxLines = 1)
+                                        }
+                                    }
+
+                                    if (BluetoothThermalPrinterService.isBluetoothPrinterConfigured(notificationPrefs)) {
+                                        TextButton(
+                                            onClick = {
+                                                onUpdateNotificationPrefs {
+                                                    it.copy(
+                                                        printerConnectionType = "SYSTEM",
+                                                        printerDeviceName = "",
+                                                        printerDeviceAddress = ""
+                                                    )
+                                                }
+                                                printerConnectionState = PrinterConnectionState.NOT_CONFIGURED
+                                                printerActionIsError = false
+                                                printerActionMessage = "تم إلغاء تعيين طابعة البلوتوث الافتراضية."
+                                            },
+                                            modifier = Modifier.testTag("clear_bluetooth_printer_button")
+                                        ) {
+                                            Icon(Icons.Filled.BluetoothDisabled, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.size(4.dp))
+                                            Text("إلغاء ربط طابعة البلوتوث")
+                                        }
+                                    }
+
+                                    if (printerActionMessage != null) {
+                                        Text(
+                                            text = printerActionMessage!!,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = if (printerActionIsError) alasalColors.arrearsRed else alasalColors.creditGreen,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.testTag("bluetooth_printer_feedback")
+                                        )
+                                    }
+                                }
                             }
+
+                            HorizontalDivider()
                             Text(
-                                text = "ملاحظة: اختيار الجهاز من القائمة والاتصال والطباعة المباشرة سيُفعّلان بعد إضافة دعم بروتوكول الطابعة. لا يتم افتراض توافق كل الطابعات.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                text = "بيانات المؤسسة وواتساب على الإيصال",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
                             )
                             OutlinedTextField(
                                 value = stationPhoneInput,
@@ -588,6 +876,169 @@ fun SystemDiagnosticsScreen(
                             color = alasalColors.gold,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showBluetoothPickerDialog) {
+        Dialog(
+            onDismissRequest = { showBluetoothPickerDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 520.dp)
+                    .heightIn(max = 560.dp)
+                    .testTag("bluetooth_devices_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "أجهزة البلوتوث المقترنة",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "اختر الطابعة الحرارية الافتراضية من الأجهزة المقترنة بالهاتف",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { showBluetoothPickerDialog = false },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "إغلاق")
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    if (pairedPrinters.isEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "لا توجد أجهزة بلوتوث مقترنة بالهاتف. يرجى إقران الطابعة الحرارية أولاً من إعدادات البلوتوث في جهاز الأندرويد ثم إعادة المحاولة.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(14.dp)
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .heightIn(max = 340.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(pairedPrinters, key = { it.macAddress }) { device ->
+                                val isSelected = notificationPrefs.printerConnectionType == "BLUETOOTH" &&
+                                    notificationPrefs.printerDeviceAddress.equals(device.macAddress, ignoreCase = true)
+                                val selectedBlue = Color(0xFF1976D2)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("bt_device_item_${device.macAddress}")
+                                        .clickable {
+                                            onUpdateNotificationPrefs {
+                                                it.copy(
+                                                    printerConnectionType = "BLUETOOTH",
+                                                    printerDeviceName = device.name,
+                                                    printerDeviceAddress = device.macAddress
+                                                )
+                                            }
+                                            showBluetoothPickerDialog = false
+                                            printerActionIsError = false
+                                            printerActionMessage = "تم حفظ الطابعة الافتراضية: ${device.name} (${device.macAddress})"
+                                            refreshConnectionStatus(device.macAddress)
+                                        },
+                                    shape = MaterialTheme.shapes.medium,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isSelected) {
+                                            selectedBlue.copy(alpha = 0.10f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surface
+                                        }
+                                    ),
+                                    border = BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) selectedBlue else alasalColors.cardBorder
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Bluetooth,
+                                                contentDescription = null,
+                                                tint = if (isSelected) selectedBlue else MaterialTheme.colorScheme.primary
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = device.name,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = device.macAddress,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Filled.CheckCircle,
+                                                contentDescription = "الطابعة المختارة",
+                                                tint = selectedBlue,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    Button(
+                        onClick = { showBluetoothPickerDialog = false },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("bluetooth_devices_close_button")
+                    ) {
+                        Text("إغلاق")
                     }
                 }
             }

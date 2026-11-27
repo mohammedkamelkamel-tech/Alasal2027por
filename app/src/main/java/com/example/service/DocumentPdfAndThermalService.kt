@@ -26,7 +26,10 @@ import android.text.TextPaint
 import androidx.core.content.FileProvider
 import androidx.core.content.res.ResourcesCompat
 import com.example.R
+import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.ReceiptEntity
+import com.example.data.local.entity.SubscriberEntity
+import com.example.domain.finance.ConsumptionPeriodHelper
 import com.example.domain.finance.FieldCollectionSheetItem
 import com.example.domain.finance.GeneratedReport
 import com.example.domain.finance.MonthlyConsumptionSummary
@@ -1233,6 +1236,77 @@ object DocumentPdfAndThermalService {
         }
 
         writePagesPdf(file, pages)
+        return file
+    }
+
+    /**
+     * Generates a clean A4 PDF for a single invoice with logo, watermark, and exact
+     * consumption period range ("الفترة: من ... إلى ..."), separate from direct thermal printing.
+     */
+    fun generateInvoiceA4Pdf(
+        context: Context,
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        periodLabel: String,
+        stationAddress: String = "محطة العسل لتوليد وتوزيع الكهرباء",
+        stationPhone: String = "770002027",
+        outputFile: File? = null
+    ): File {
+        val dir = File(context.cacheDir, "shared_pdfs").apply { mkdirs() }
+        val file = outputFile ?: File(dir, "Invoice_${invoice.invoiceNumber}.pdf")
+        val typeface = loadArabicTypeface(context)
+        val issuedDateStr = ConsumptionPeriodHelper.formatDateDayMonthYear(invoice.issuedAt)
+
+        val rows = listOf(
+            "اسم المشترك" to (subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"),
+            "رقم المشترك" to (subscriber?.subscriberCode ?: "-"),
+            "رقم العداد" to (subscriber?.meterNumber ?: "-"),
+            "فترة الاستهلاك" to periodLabel,
+            "القراءة السابقة / الحالية" to "${invoice.previousReading} ← ${invoice.currentReading}",
+            "الاستهلاك (ك.و.س)" to "${invoice.consumedKwh}",
+            "سعر الكيلوواط المطبق" to "${invoice.unitPriceApplied}",
+            "قيمة الاستهلاك الحالي" to "${invoice.energyAmount}",
+            "المتأخرات المرحلة" to "${invoice.previousArrearsApplied}",
+            "الرصيد الدائن المخصوم" to "${invoice.creditDeducted}",
+            "صافي الفاتورة المطلوب" to "${invoice.netPayableAmount}",
+            "المدفوع" to "${invoice.paidAmount}",
+            "المتبقي" to "${invoice.remainingAmount}",
+            "تاريخ الإصدار" to issuedDateStr,
+            "حالة الفاتورة" to InvoiceShareAndPrintService.translateStatus(invoice.status)
+        )
+
+        val page = PdfPageSpec(A4_WIDTH_PT, A4_HEIGHT_PT) { canvas ->
+            var y = drawA4PageDecor(
+                context = context,
+                canvas = canvas,
+                typeface = typeface,
+                title = "فاتورة استهلاك كهرباء رقم ${invoice.invoiceNumber}",
+                subtitle = periodLabel,
+                stationName = "محطة العسل",
+                stationPhone = stationPhone,
+                stationAddress = stationAddress,
+                pageNumber = 1
+            )
+            val widths = listOf(220f, 311f)
+            drawRtlRow(canvas, y, 28f, listOf("البيان", "القيمة"), widths, COLOR_NAVY, Color.WHITE, typeface, isBold = true, fontSize = 10.5f)
+            y += 28f
+            rows.forEachIndexed { idx, (label, value) ->
+                val isHighlight = label.contains("صافي") || label.contains("المتبقي")
+                val bg = when {
+                    isHighlight -> COLOR_HIGHLIGHT_BG
+                    idx % 2 == 1 -> COLOR_LIGHT_BG
+                    else -> null
+                }
+                val txtColor = when {
+                    label.contains("المتبقي") && invoice.remainingAmount > 0.0 -> COLOR_RED
+                    label.contains("المدفوع") && invoice.paidAmount > 0.0 -> COLOR_GREEN
+                    else -> COLOR_NAVY
+                }
+                drawRtlRow(canvas, y, 30f, listOf(label, value), widths, bg, txtColor, typeface, isBold = isHighlight, fontSize = 10f)
+                y += 30f
+            }
+        }
+        writePagesPdf(file, listOf(page))
         return file
     }
 

@@ -25,6 +25,7 @@ import androidx.core.content.FileProvider
 import com.example.R
 import com.example.data.local.entity.InvoiceEntity
 import com.example.data.local.entity.SubscriberEntity
+import com.example.domain.finance.ConsumptionPeriodHelper
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLEncoder
@@ -52,15 +53,20 @@ object InvoiceShareAndPrintService {
         }.getOrNull()
     }
 
-    fun buildInvoiceShareText(invoice: InvoiceEntity, subscriber: SubscriberEntity?): String {
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("ar"))
+    fun buildInvoiceShareText(
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        periodLabel: String? = null
+    ): String {
         val subName = subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"
+        val resolvedPeriod = periodLabel?.takeIf { it.isNotBlank() } ?: "الفترة: ${invoice.billingPeriod}"
         fun amount(value: Double): String =
             if (value % 1.0 == 0.0) value.toLong().toString() else String.format(Locale.US, "%.2f", value)
         return buildString {
             appendLine("⚡ *فاتورة كهرباء - محطة العسل*")
             appendLine("👤 المشترك: $subName")
             appendLine("📄 رقم الفاتورة: #${invoice.invoiceNumber}")
+            appendLine("📆 $resolvedPeriod")
             appendLine("📊 القراءة السابقة: ${amount(invoice.previousReading)} ك.و.س")
             appendLine("📈 القراءة الحالية: ${amount(invoice.currentReading)} ك.و.س")
             appendLine("⚡ الاستهلاك: ${amount(invoice.consumedKwh)} ك.و.س")
@@ -68,12 +74,17 @@ object InvoiceShareAndPrintService {
             appendLine("💰 إجمالي المستحق: ${amount(invoice.netPayableAmount)} ريال يمني")
             appendLine("💵 المدفوع: ${amount(invoice.paidAmount)} ريال")
             appendLine("🔻 المتبقي: ${amount(invoice.remainingAmount)} ريال")
-            append("📅 تاريخ الفاتورة: ${dateFormat.format(Date(invoice.issuedAt))}")
+            append("📅 تاريخ الفاتورة: ${ConsumptionPeriodHelper.formatDateDayMonthYear(invoice.issuedAt)}")
         }
     }
 
-    fun shareInvoiceText(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?) {
-        val text = buildInvoiceShareText(invoice, subscriber)
+    fun shareInvoiceText(
+        context: Context,
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        periodLabel: String? = null
+    ) {
+        val text = buildInvoiceShareText(invoice, subscriber, periodLabel)
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "فاتورة كهرباء ${invoice.invoiceNumber} - محطة العسل")
@@ -182,9 +193,14 @@ object InvoiceShareAndPrintService {
         }
     }
 
-    private fun generateInvoicePngImage(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?): File {
+    private fun generateInvoicePngImage(
+        context: Context,
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        periodLabel: String? = null
+    ): File {
         val width = 900
-        val height = 1420
+        val height = 1460
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val navy = Color.rgb(13, 38, 60)
@@ -213,16 +229,18 @@ object InvoiceShareAndPrintService {
             canvas.drawBitmap(logo, null, dst, basePaint)
             logo.recycle()
         }
+        val resolvedPeriod = periodLabel?.takeIf { it.isNotBlank() } ?: "الفترة: ${invoice.billingPeriod}"
         drawRtl("محطة العسل", 45, 165, width-90, 52f, true)
         drawRtl("إشعار فاتورة استهلاك كهرباء — رقم ${invoice.invoiceNumber}", 45, 230, width-90, 30f, false, Color.DKGRAY)
         basePaint.color = gold
         canvas.drawRect(45f, 292f, width-45f, 301f, basePaint)
-        drawRtl("المشترك: ${subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"}", 55, 330, width-110, 34f, true)
-        drawRtl("رقم العداد: ${subscriber?.meterNumber ?: "-"}  |  الفترة: ${invoice.billingPeriod}", 55, 382, width-110, 30f)
+        drawRtl("المشترك: ${subscriber?.fullName ?: "مشترك #${invoice.subscriberId}"}", 55, 322, width-110, 34f, true)
+        drawRtl("رقم العداد: ${subscriber?.meterNumber ?: "-"}", 55, 370, width-110, 28f)
+        drawRtl(resolvedPeriod, 55, 412, width-110, 28f, true, Color.rgb(180, 128, 12))
         val left = 45f
         val right = width-45f
         val split = width/2f
-        var y = 450f
+        var y = 468f
         val rowHeight = 68f
         val rows = listOf(
             "القراءة السابقة / الحالية" to "${invoice.previousReading} ← ${invoice.currentReading}",
@@ -293,17 +311,19 @@ object InvoiceShareAndPrintService {
         context: Context,
         invoice: InvoiceEntity,
         subscriber: SubscriberEntity?,
-        defaultCountryCode: String = "967"
+        defaultCountryCode: String = "967",
+        periodLabel: String? = null
     ): String? {
         val norm = normalizePhoneForWhatsApp(subscriber?.phoneNumber, defaultCountryCode)
         if (!norm.isValid) return norm.warningMessage
-        val image = runCatching { generateInvoicePngImage(context, invoice, subscriber) }.getOrElse {
+        val image = runCatching { generateInvoicePngImage(context, invoice, subscriber, periodLabel) }.getOrElse {
             return "تعذر تجهيز صورة الفاتورة للمشاركة."
         }
+        val periodLine = periodLabel?.takeIf { it.isNotBlank() }?.let { "\n$it" } ?: ""
         return sendImageToWhatsApp(
             context,
             image,
-            "فاتورة كهرباء رقم ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName.orEmpty()}",
+            "فاتورة كهرباء رقم ${invoice.invoiceNumber} للمشترك ${subscriber?.fullName.orEmpty()}$periodLine",
             norm.normalizedDigits
         )
     }
@@ -330,10 +350,15 @@ object InvoiceShareAndPrintService {
         }
     }
 
-    fun printInvoice(context: Context, invoice: InvoiceEntity, subscriber: SubscriberEntity?, thermalWidthMm: Int = 58) {
-        val arabicLocale = Locale.forLanguageTag("ar")
-        val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", arabicLocale)
-        val html = """
+    fun buildInvoicePrintHtml(
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        thermalWidthMm: Int = 58,
+        periodLabel: String? = null
+    ): String {
+        val resolvedPeriod = periodLabel?.takeIf { it.isNotBlank() } ?: "الفترة: ${invoice.billingPeriod}"
+        val issuedDateStr = ConsumptionPeriodHelper.formatDateDayMonthYear(invoice.issuedAt)
+        return """
             <!DOCTYPE html>
             <html lang="ar" dir="rtl">
             <head>
@@ -361,7 +386,8 @@ object InvoiceShareAndPrintService {
                 <div class="sub">إشعار فاتورة استهلاك كهرباء — رقم ${invoice.invoiceNumber}</div>
               </div>
               <p><strong>المشترك:</strong> ${subscriber?.fullName ?: "-"} (${subscriber?.subscriberCode ?: "-"})</p>
-              <p><strong>رقم العداد:</strong> ${subscriber?.meterNumber ?: "-"} | <strong>الفترة:</strong> ${invoice.billingPeriod}</p>
+              <p><strong>رقم العداد:</strong> ${subscriber?.meterNumber ?: "-"}</p>
+              <p><strong>$resolvedPeriod</strong></p>
               <table>
                 <tr><th>البيان</th><th>القيمة</th></tr>
                 <tr><td>القراءة السابقة / الحالية</td><td>${invoice.previousReading} ← ${invoice.currentReading}</td></tr>
@@ -374,11 +400,20 @@ object InvoiceShareAndPrintService {
                 <tr><td>المدفوع</td><td>${invoice.paidAmount}</td></tr>
                 <tr class="total"><td>المتبقي</td><td>${invoice.remainingAmount}</td></tr>
               </table>
-              <p class="sub">تاريخ الإصدار: ${dateFormat.format(Date(invoice.issuedAt))} | الحالة: ${translateStatus(invoice.status)}</p>
+              <p class="sub">تاريخ الإصدار: $issuedDateStr | الحالة: ${translateStatus(invoice.status)}</p>
             </body>
             </html>
         """.trimIndent()
+    }
 
+    fun printInvoice(
+        context: Context,
+        invoice: InvoiceEntity,
+        subscriber: SubscriberEntity?,
+        thermalWidthMm: Int = 58,
+        periodLabel: String? = null
+    ) {
+        val html = buildInvoicePrintHtml(invoice, subscriber, thermalWidthMm, periodLabel)
         val webView = WebView(context)
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
